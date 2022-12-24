@@ -50,7 +50,7 @@ interface ExecuteRequest extends RequestMessage {
 }
 interface QueryRequest extends RequestMessage {
   sql: string;
-  params?: QueryParameterSet;
+  args?: QueryParameterSet;
 }
 class Database {
   readonly db: DB;
@@ -66,7 +66,7 @@ class Database {
   query(req: QueryRequest) {
     return this.db.query(
       req.sql,
-      req.params,
+      req.args,
     );
   }
 }

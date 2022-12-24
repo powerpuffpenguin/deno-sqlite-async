@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
-import { Completer } from "../deps/easyts/mod.ts";
+import { background, Context } from "../deps/easyts/context/mod.ts";
+import { Chan, Completer, selectChan } from "../deps/easyts/mod.ts";
 import { SqliteError, Status } from "../sqlite.ts";
 
 export interface InvokeResponse {
@@ -9,91 +10,122 @@ export interface InvokeResponse {
   error?: any;
   data?: any;
 }
+
+export interface Task {
+  req: any;
+  c: Completer<any>;
+}
 export class Caller {
-  private w_: Worker | undefined;
-  constructor(readonly path: string, worker: Worker) {
-    this.w_ = worker;
+  private ch_ = new Chan<Task>();
+  private done_ = new Chan<void>();
+  private closed_ = new Chan<void>();
+  constructor(readonly path: string, readonly worker: Worker) {
+    this._serve();
+  }
+  private readonly init_ = new Completer();
+  init() {
+    return this.init_.promise;
+  }
+  private async _serve() {
+    // wait ready
+    const worker = this.worker;
+    const init = this.init_;
+    worker.onmessage = (_) => {
+      init.resolve();
+    };
+    await init.promise;
+
+    // work
+    const ch = this.ch_;
+    const done = this.done_;
+    let task: undefined | Task;
     worker.onmessage = (evt) => {
       const resp: InvokeResponse = evt.data;
-      const c = this.c_;
-      if (c) {
-        this.c_ = undefined;
-        switch (resp.code) {
-          case 0:
-            c.resolve(resp.data);
-            break;
-          case 1:
-            c.reject(new SqliteError(resp.message!, resp.status));
-            break;
-          default:
-            c.reject(resp.error);
-            break;
-        }
+      const c = task!.c;
+      switch (resp.code) {
+        case 0:
+          c.resolve(resp.data);
+          break;
+        case 1:
+          c.reject(new SqliteError(resp.message!, resp.status));
+          break;
+        default:
+          c.reject(resp.error);
+          break;
       }
     };
-  }
-  init() {
-    const c = new Completer();
-    this.c_ = c;
-    return c.promise;
-  }
-  async close(): Promise<boolean> {
-    let w = this.w_;
-    if (!w) {
-      return false;
-    }
-
-    // wait request end
-    let c = this.c_;
-    while (c) {
+    const cch = ch.readCase();
+    const cdone = done.readCase();
+    while (true) {
+      if (cdone == await selectChan(cch, cdone)) {
+        break;
+      }
+      task = cch.read()!;
+      // execute
+      worker.postMessage(task.req);
+      // wait resp
       try {
-        await c.promise;
+        await task.c.promise;
       } catch (_) { //
       }
-      c = this.c_;
     }
-
-    // check already closed
-    w = this.w_;
-    if (!w) {
+    // execute close
+    task = {
+      req: {
+        what: 1,
+      },
+      c: new Completer(),
+    };
+    worker.postMessage(task.req);
+    // wait close
+    try {
+      await task.c.promise;
+    } catch (_) { //
+    }
+    worker.terminate();
+    this.closed_.close();
+  }
+  isClosed(): boolean {
+    return this.done_.isClosed;
+  }
+  close(): boolean {
+    if (this.done_.isClosed) {
       return false;
     }
-
-    this.w_ = undefined;
-    w.onmessage = undefined;
-    w.terminate();
+    this.done_.close();
     return true;
   }
-  private c_: Completer<any> | undefined;
+  async wait() {
+    await this.closed_.read();
+  }
 
-  private last_ = false;
-  async invoke(req: any, last?: boolean): Promise<any> {
-    if (this.last_) {
-      throw new Error(`db already closed: ${this.path}`);
+  invoke(ctx: Context | undefined, req: any): Promise<any> {
+    if (!ctx) {
+      ctx = background();
     }
-    if (last) {
-      this.last_ = true;
+    if (ctx.isClosed) {
+      throw ctx.err;
+    } else if (this.done_.isClosed) {
+      throw new SqliteError(`db already closed: ${this.path}`);
     }
-    let w = this.w_;
-    if (!w) {
-      throw new Error(`db already closed: ${this.path}`);
+    const task: Task = {
+      req: req,
+      c: new Completer(),
+    };
+    this._invoke(ctx, task);
+    return task.c.promise;
+  }
+  private async _invoke(ctx: Context, task: Task) {
+    const done = ctx.done.readCase();
+    const done2 = this.done_.readCase();
+    const cch = this.ch_.writeCase(task);
+    switch (await selectChan(done, done2, cch)) {
+      case done:
+        task.c.reject(ctx.err);
+        break;
+      case done2:
+        task.c.reject(new SqliteError(`db already closed: ${this.path}`));
+        break;
     }
-
-    let c = this.c_;
-    while (c) {
-      try {
-        await c.promise;
-      } catch (_) { //
-      }
-      c = this.c_;
-    }
-    w = this.w_;
-    if (!w) {
-      throw new Error(`db already closed: ${this.path}`);
-    }
-    c = new Completer<any>();
-    this.c_ = c;
-    w.postMessage(req);
-    return c.promise;
   }
 }

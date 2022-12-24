@@ -5,6 +5,7 @@
     "deno.inlayHints.parameterTypes.enabled": false,
     "deno.inlayHints.parameterNames.enabled":"none",
     "deno.inlayHints.functionLikeReturnTypes.enabled": false,
+    "deno.inlayHints.propertyDeclarationTypes.enabled": false,
     "deno.lint": true,
     "editor.formatOnSave": true,
     "[typescript]": {

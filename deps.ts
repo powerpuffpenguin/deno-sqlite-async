@@ -53,6 +53,7 @@ deps(
     [
       "mod.ts",
       "context/mod.ts",
+      "sync/mod.ts",
     ],
   ),
   define(
