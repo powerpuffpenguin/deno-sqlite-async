@@ -1,6 +1,6 @@
-import { Raw } from "../mod.ts";
+import { Method, RawDB } from "../mod.ts";
 
-const db = await Raw.open("test_raw.db");
+const db = await RawDB.open("test_raw.db");
 try {
   console.log("open db:", db.path);
   await db.execute(
@@ -54,6 +54,58 @@ DELETE FROM people;`,
     ],
   });
   console.log(rows);
+
+  //
+  const items = [];
+  for (let i = 0; i < 1000000; i++) {
+    items.push(i);
+  }
+  const last = Date.now();
+  await db.execute("begin");
+  // for (const v of items) {
+  //   await db.execute("INSERT INTO people (id,name) VALUES (?,?)", {
+  //     args: [100 + v, `${v}`],
+  //   });
+  // }
+  // await db.batch({
+  //   batch: items.map((v) => {
+  //     return {
+  //       sql: "INSERT INTO people (id,name) VALUES (?,?)",
+  //       args: [100 + v, `${v}`],
+  //     };
+  //   }),
+  // });
+  const prepared = await db.prepare(
+    "INSERT INTO people (id,name) VALUES (?,?)",
+  );
+  try {
+    // for (const v of items) {
+    //   await prepared.execute({
+    //     args: [100 + v, `${v}`],
+    //   });
+    // }
+    // await db.batch({
+    //   batch: items.map((v) => {
+    //     return {
+    //       sql: prepared,
+    //       method: Method.execute,
+    //       args: [100 + v, `${v}`],
+    //     };
+    //   }),
+    // });
+
+    await prepared.batch(items.map((v) => {
+      return {
+        method: Method.execute,
+        args: [100 + v, `${v}`],
+      };
+    }));
+  } finally {
+    await prepared.close();
+  }
+  await db.execute("end");
+  console.log((Date.now() - last) / 1000);
+  console.log(await db.query("select count(id) from people"));
 } finally {
   db.close();
 }
