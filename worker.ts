@@ -2,6 +2,7 @@
 import {
   DB,
   QueryParameterSet,
+  Row,
   SqliteError,
   SqliteOptions,
 } from "./deps/sqlite/mod.ts";
@@ -31,6 +32,7 @@ enum What {
   close,
   execute = 10,
   query,
+  batch = 20,
 }
 interface RequestMessage {
   what: What;
@@ -52,6 +54,13 @@ interface QueryRequest extends RequestMessage {
   sql: string;
   args?: QueryParameterSet;
 }
+interface BatchRequest extends RequestMessage {
+  batch: Array<{
+    sql: string;
+    args?: QueryParameterSet;
+    result?: boolean;
+  }>;
+}
 class Database {
   readonly db: DB;
   constructor(req: OpenRequest) {
@@ -68,6 +77,21 @@ class Database {
       req.sql,
       req.args,
     );
+  }
+  batch<R extends Row = Row>(req: BatchRequest) {
+    const result: Array<Array<R>> = [];
+    for (const batch of req.batch) {
+      if (batch.result) {
+        result.push(this.db.query(batch.sql, batch.args));
+      } else {
+        if (batch.args) {
+          this.db.query(batch.sql, batch.args);
+        } else {
+          this.db.execute(batch.sql);
+        }
+      }
+    }
+    return result;
   }
 }
 let db: Database | undefined;
@@ -93,6 +117,9 @@ self.onmessage = (evt: MessageEvent) => {
         break;
       case What.query:
         resp = db!.query(data as QueryRequest);
+        break;
+      case What.batch:
+        resp = db!.batch(data as BatchRequest);
         break;
       default:
         throw new Error(`unknow worker message: ${JSON.stringify(data)}`);

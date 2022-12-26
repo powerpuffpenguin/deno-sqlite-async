@@ -7,6 +7,7 @@ export enum What {
   close,
   execute = 10,
   query,
+  batch = 20,
 }
 export interface OpenOptions extends SqliteOptions {
   /**
@@ -101,4 +102,20 @@ export class Raw {
       args: opts?.args,
     });
   }
+  batch<R extends Row = Row>(opts: BatchOptions): Promise<Array<Array<R>>> {
+    return this.caller_.invoke(opts.ctx, {
+      what: What.batch,
+      batch: opts.batch,
+    });
+  }
+}
+export interface BatchOptions {
+  ctx?: Context;
+  batch: Array<Batch>;
+}
+
+export interface Batch {
+  sql: string;
+  args?: QueryParameterSet;
+  result?: boolean;
 }
