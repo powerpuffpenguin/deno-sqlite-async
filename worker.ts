@@ -14,18 +14,18 @@ declare const self: {
   postMessage(message: any, options?: StructuredSerializeOptions): void;
 };
 
-function postError(e: any) {
+function getError(e: any) {
   if (e instanceof SqliteError) {
-    self.postMessage({
+    return {
       code: 1,
       message: e.message,
       status: e.code,
-    });
+    };
   } else {
-    self.postMessage({
+    return {
       code: 2,
       error: e,
-    });
+    };
   }
 }
 
@@ -37,10 +37,15 @@ enum What {
   batch = 20,
   prepare = 30,
   method,
+  task = 40,
 }
 type Prepared = PreparedQuery<Row, RowObject, QueryParameterSet>;
 interface RequestMessage {
   what: What;
+}
+interface TaskMessage extends RequestMessage {
+  what: What;
+  task: Array<RequestMessage>;
 }
 interface OpenRequest extends RequestMessage {
   path: string;
@@ -284,9 +289,8 @@ class Database {
   private keys_ = new Map<number, Prepared>();
 }
 let db: Database | undefined;
-self.onmessage = (evt: MessageEvent) => {
+function doTask(data: RequestMessage) {
   try {
-    const data = evt.data as RequestMessage;
     let resp: any;
     switch (data.what) {
       case What.open:
@@ -319,12 +323,29 @@ self.onmessage = (evt: MessageEvent) => {
       default:
         throw new Error(`unknow worker message: ${JSON.stringify(data)}`);
     }
-    self.postMessage({
+    return {
       code: 0,
       data: resp,
-    });
+    };
   } catch (e) {
-    postError(e);
+    return getError(e);
+  }
+}
+self.onmessage = (evt: MessageEvent) => {
+  const data = evt.data as RequestMessage;
+  if (data.what == What.task) {
+    const evt = data as TaskMessage;
+    const result = new Array<any>(evt.task.length);
+    let i = 0;
+    for (const task of evt.task) {
+      result[i++] = doTask(task);
+    }
+    return self.postMessage({
+      code: 0,
+      data: result,
+    });
+  } else {
+    self.postMessage(doTask(data));
   }
 };
 self.postMessage({

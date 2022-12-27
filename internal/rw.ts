@@ -1,21 +1,23 @@
-import { Chan, selectChan, WriteChannel } from "../deps/easyts/mod.ts";
+import {
+  Chan,
+  ReadChannel,
+  selectChan,
+  WriteChannel,
+} from "../deps/easyts/mod.ts";
 import { background, Context } from "../deps/easyts/context/mod.ts";
+export const errClosed = new Error("RW already closed");
 export class RW {
   private wl_ = new Chan<number>();
   private wu_ = new Chan<number>();
   private rl_ = new Chan<number>();
   private ru_ = new Chan<number>();
-  private done_ = new Chan<number>();
   private w_ = false;
   private r_ = 0;
-  constructor() {
+  constructor(readonly done: ReadChannel<void>) {
     this.serve();
   }
-  close() {
-    this.done_.close();
-  }
   async serve() {
-    const done = this.done_;
+    const done = this.done;
     const wl = this.wl_;
     const wu = this.wu_;
     const rl = this.rl_;
@@ -86,16 +88,16 @@ export class RW {
     if (ctx.isClosed) {
       return false;
     }
-    const done = this.done_;
+    const done = this.done;
     if (done.isClosed) {
-      throw new Error("RW already closed");
+      throw errClosed;
     }
     const cdone = done.readCase();
     const cd = ctx.done.readCase();
     const cw = ch.writeCase(0);
     switch (await selectChan(cdone, cd, cw)) {
       case cdone:
-        throw new Error("RW already closed");
+        throw errClosed;
       case cd:
         return false;
       case cw:
@@ -109,9 +111,6 @@ export class RW {
       return new _Locked(this);
     }
   }
-  /**
-   * @internal
-   */
   unlock(ctx: Context): Promise<boolean> {
     return this._send(ctx, this.wu_);
   }
@@ -121,9 +120,6 @@ export class RW {
       return new _Locked(this, true);
     }
   }
-  /**
-   * @internal
-   */
   readUnlock(ctx: Context): Promise<boolean> {
     return this._send(ctx, this.ru_);
   }

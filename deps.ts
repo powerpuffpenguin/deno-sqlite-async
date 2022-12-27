@@ -49,7 +49,7 @@ deps(
   ]),
   define(
     "easyts",
-    "https://deno.land/x/easyts@0.1.1",
+    "https://deno.land/x/easyts@0.1.2",
     [
       "mod.ts",
       "context/mod.ts",

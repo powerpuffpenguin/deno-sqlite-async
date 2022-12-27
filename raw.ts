@@ -7,23 +7,18 @@ import {
   SqliteError,
   SqliteOptions,
 } from "./sqlite.ts";
-import { Caller } from "./internal/caller.ts";
+import { Caller, What } from "./internal/caller.ts";
 import { background, Context } from "./deps/easyts/context/mod.ts";
 
-export enum What {
-  open = 1,
-  close,
-  execute = 10,
-  query,
-  batch = 20,
-  prepare = 30,
-  method,
-}
 export interface OpenOptions extends SqliteOptions {
   /**
    * web worker url
    */
   worker?: URL;
+  /**
+   * How many different requests can be combined and submitted to the web worker at most
+   */
+  task?: number;
 }
 
 export interface Options {
@@ -41,7 +36,11 @@ export class RawDB {
         type: "module",
       },
     );
-    const caller = new Caller(path, w);
+    let task = Math.floor(opts?.task ?? 1000);
+    if (task < 1) {
+      task = 1000;
+    }
+    const caller = new Caller(path, w, task);
     await caller.init();
     const db = new RawDB(path, caller);
     await db._init(path, opts);

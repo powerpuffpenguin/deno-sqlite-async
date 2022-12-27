@@ -1,5 +1,5 @@
 import { Method, RawDB } from "../mod.ts";
-
+import { WaitGroup } from "../deps/easyts/sync/mod.ts";
 const db = await RawDB.open("test_raw.db");
 try {
   console.log("open db:", db.path);
@@ -57,16 +57,18 @@ DELETE FROM people;`,
 
   //
   const items = [];
-  for (let i = 0; i < 1000000; i++) {
+  for (let i = 0; i < 100000; i++) {
     items.push(i);
   }
   const last = Date.now();
   await db.execute("begin");
+
   // for (const v of items) {
-  //   await db.execute("INSERT INTO people (id,name) VALUES (?,?)", {
-  //     args: [100 + v, `${v}`],
-  //   });
+  //   await db.execute("INSERT INTO people (name) VALUES (?)", {
+  //     args: [`${v}`],
+  //   })
   // }
+
   // await db.batch({
   //   batch: items.map((v) => {
   //     return {
