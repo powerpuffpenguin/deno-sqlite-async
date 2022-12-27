@@ -54,8 +54,27 @@ export enum Conflict {
   replace,
 }
 
+/**
+ * The sqlite provided by WebAssembly cannot correctly acquire the file lock, but you can use the lock inside the process, which can ensure that the current process uses sqlite correctly
+ */
+export enum Locker {
+  /**
+   * No locking
+   */
+  none,
+  /**
+   * Lock shared locks, multiple requests using shared locks may be executed in parallel
+   */
+  shared,
+  /**
+   * Lock the exclusive lock, which will ensure that any other requests using the exclusive lock/shared lock will not be executed
+   */
+  exclusive,
+}
+
 export interface Options {
   ctx?: Context;
+  lock?: Locker;
 }
 export interface ExecuteOptions extends Options {
   args?: QueryParameterSet;

@@ -10,7 +10,7 @@ import {
 import { Caller, What } from "./internal/caller.ts";
 import { background, Context } from "./deps/easyts/context/mod.ts";
 
-export interface OpenOptions extends SqliteOptions {
+export interface RawOpenOptions extends SqliteOptions {
   /**
    * web worker url
    */
@@ -21,14 +21,14 @@ export interface OpenOptions extends SqliteOptions {
   task?: number;
 }
 
-export interface Options {
+export interface RawOptions {
   ctx?: Context;
   args?: QueryParameterSet;
 }
 export class RawDB {
   static async open(
     path = ":memory:",
-    opts?: OpenOptions,
+    opts?: RawOpenOptions,
   ): Promise<RawDB> {
     const w = new Worker(
       opts?.worker ?? new URL("./worker.ts", import.meta.url),
@@ -55,6 +55,9 @@ export class RawDB {
    */
   close() {
     return this.caller_.close();
+  }
+  done() {
+    return this.caller_.done();
   }
   /**
    * wait db close
@@ -84,7 +87,7 @@ export class RawDB {
   /**
    * Executing sql does not need to return results
    */
-  async execute(sql: string, opts?: Options): Promise<void> {
+  async execute(sql: string, opts?: RawOptions): Promise<void> {
     if (opts?.args) {
       await this.caller_.invoke(opts.ctx, {
         what: What.query,
@@ -103,7 +106,7 @@ export class RawDB {
    */
   query(
     sql: string,
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<Array<Row>> {
     return this.caller_.invoke(opts?.ctx, {
       what: What.query,
@@ -155,7 +158,7 @@ export class RawDB {
       })
       : batch;
   }
-  async prepare(sql: string, opts?: Options): Promise<RawPrepared> {
+  async prepare(sql: string, opts?: RawOptions): Promise<RawPrepared> {
     const id = await this.caller_.invoke(opts?.ctx, {
       what: What.prepare,
       sql: sql,
@@ -254,7 +257,7 @@ export class RawPrepared {
       method: Method.columns,
     });
   }
-  first(opts?: Options): Promise<Row | undefined> {
+  first(opts?: RawOptions): Promise<Row | undefined> {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
@@ -268,7 +271,7 @@ export class RawPrepared {
     });
   }
   firstEntry(
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<RowObject | undefined> {
     const id = this.id_;
     if (id == undefined) {
@@ -283,7 +286,7 @@ export class RawPrepared {
     });
   }
   all(
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<Array<Row>> {
     const id = this.id_;
     if (id == undefined) {
@@ -298,7 +301,7 @@ export class RawPrepared {
     });
   }
   allEntries(
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<Array<RowObject>> {
     const id = this.id_;
     if (id == undefined) {
@@ -313,7 +316,7 @@ export class RawPrepared {
     });
   }
   execute(
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<undefined> {
     const id = this.id_;
     if (id == undefined) {
@@ -327,7 +330,7 @@ export class RawPrepared {
     });
   }
   expandSql(
-    opts?: Options,
+    opts?: RawOptions,
   ): Promise<string> {
     const id = this.id_;
     if (id == undefined) {

@@ -310,6 +310,7 @@ function doTask(data: RequestMessage) {
         break;
       case What.query:
         resp = db!.query(data as QueryRequest);
+        console.log(data, resp);
         break;
       case What.batch:
         resp = db!.batch(data as BatchRequest);

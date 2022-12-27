@@ -84,9 +84,9 @@ export class RW {
       }
     }
   }
-  async _send(ctx: Context, ch: WriteChannel<number>): Promise<boolean> {
+  async _send(ctx: Context, ch: WriteChannel<number>): Promise<void> {
     if (ctx.isClosed) {
-      return false;
+      throw ctx.err;
     }
     const done = this.done;
     if (done.isClosed) {
@@ -99,28 +99,23 @@ export class RW {
       case cdone:
         throw errClosed;
       case cd:
-        return false;
+        throw ctx.err;
       case cw:
         break;
     }
-    return true;
   }
-  async lock(ctx: Context): Promise<Locked | undefined> {
-    const ok = await this._send(ctx, this.wl_);
-    if (ok) {
-      return new _Locked(this);
-    }
+  async lock(ctx?: Context): Promise<Locked> {
+    await this._send(ctx ?? background(), this.wl_);
+    return new _Locked(this);
   }
-  unlock(ctx: Context): Promise<boolean> {
+  unlock(ctx: Context) {
     return this._send(ctx, this.wu_);
   }
-  async readLock(ctx: Context): Promise<Locked | undefined> {
-    const ok = await this._send(ctx, this.rl_);
-    if (ok) {
-      return new _Locked(this, true);
-    }
+  async readLock(ctx?: Context): Promise<Locked> {
+    await this._send(ctx ?? background(), this.rl_);
+    return new _Locked(this, true);
   }
-  readUnlock(ctx: Context): Promise<boolean> {
+  readUnlock(ctx: Context) {
     return this._send(ctx, this.ru_);
   }
 }

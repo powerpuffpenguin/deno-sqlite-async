@@ -1,5 +1,4 @@
 import { Method, RawDB } from "../mod.ts";
-import { WaitGroup } from "../deps/easyts/sync/mod.ts";
 const db = await RawDB.open("test_raw.db");
 try {
   console.log("open db:", db.path);

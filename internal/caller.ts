@@ -1,6 +1,12 @@
 // deno-lint-ignore-file no-explicit-any
 import { background, Context } from "../deps/easyts/context/mod.ts";
-import { Chan, Completer, ReadCase, selectChan } from "../deps/easyts/mod.ts";
+import {
+  Chan,
+  Completer,
+  ReadCase,
+  ReadChannel,
+  selectChan,
+} from "../deps/easyts/mod.ts";
 import { SqliteError, Status } from "../sqlite.ts";
 export enum What {
   open = 1,
@@ -27,7 +33,7 @@ export interface Task {
 export class Caller {
   private ch_ = new Chan<Task>();
   private done_ = new Chan<void>();
-  done() {
+  done(): ReadChannel<void> {
     return this.done_;
   }
   private closed_ = new Chan<void>();
