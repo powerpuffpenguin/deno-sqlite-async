@@ -9,21 +9,14 @@ try {
   );
   DELETE FROM people;`,
   );
-
+  let i = 1;
   for (const name of ["Peter Parker", "Clark Kent", "Bruce Wayne"]) {
-    const val = await db.rawInsert("INSERT INTO people (name) VALUES (?)", {
-      args: [name],
+    const id = await db.rawInsert("INSERT INTO people (id,name) VALUES (?,?)", {
+      args: [i++, name],
     });
-    console.log(val);
+    console.log(id);
   }
-  console.log(
-    await db.raw.query(
-      "INSERT INTO people (name) VALUES (?); SELECT last_insert_rowid();",
-      {
-        args: ["1"],
-      },
-    ),
-  );
+
   for (
     const [id, name] of await db.raw.query("SELECT id,name FROM people")
   ) {

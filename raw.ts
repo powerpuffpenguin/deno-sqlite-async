@@ -125,6 +125,7 @@ export class RawDB {
       opts.ctx,
       {
         what: What.batch,
+        savepoint: opts.savepoint,
         batch: batch,
       },
     );
@@ -176,6 +177,10 @@ export interface BatchResult {
 }
 export interface RawBatchOptions {
   ctx?: Context;
+  /**
+   * Execute in SAVEPOINT if set to true
+   */
+  savepoint?: boolean;
   batch: Array<RawBatch>;
 }
 export interface RawBatch {

@@ -37,13 +37,49 @@ export class _Executor {
     }
   }
   async query(lock: Locker, sql: string, opts?: RawOptions): Promise<Row> {
-    console.log(sql);
     const locked = await this._locked(lock, opts?.ctx);
     if (!locked) {
-      await this.db.query(sql, opts);
+      return await this.db.query(sql, opts);
     }
     try {
       return await this.db.query(sql, opts);
+    } finally {
+      locked?.unlock();
+    }
+  }
+  async insert(lock: Locker, sql: string, opts?: RawOptions) {
+    const locked = await this._locked(lock, opts?.ctx);
+    if (!locked) {
+      return await this.db.batch({
+        ctx: opts?.ctx,
+        savepoint: true,
+        batch: [
+          {
+            sql: sql,
+            args: opts?.args,
+          },
+          {
+            sql: "SELECT last_insert_rowid()",
+            result: true,
+          },
+        ],
+      });
+    }
+    try {
+      return await this.db.batch({
+        ctx: opts?.ctx,
+        savepoint: true,
+        batch: [
+          {
+            sql: sql,
+            args: opts?.args,
+          },
+          {
+            sql: "SELECT last_insert_rowid()",
+            result: true,
+          },
+        ],
+      });
     } finally {
       locked?.unlock();
     }
@@ -106,14 +142,15 @@ export class DB {
     sql: string,
     opts?: RawInsertOptions,
   ) {
-    const rows = await this.er_.query(
+    const rows = await this.er_.insert(
       opts?.lock ?? Locker.shared,
-      sql + `;SELECT last_insert_rowid();`,
+      sql,
       {
         ctx: opts?.ctx,
         args: opts?.args,
       },
     );
-    return rows;
+    const row = rows[0].sql![0];
+    return row[0];
   }
 }

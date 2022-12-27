@@ -65,6 +65,7 @@ interface QueryRequest extends RequestMessage {
   args?: QueryParameterSet;
 }
 interface BatchRequest extends RequestMessage {
+  savepoint?: boolean;
   batch: Array<{
     sql: string | number;
     prepare?: boolean;
@@ -95,10 +96,44 @@ interface BatchResult extends MethodResult {
   sql?: Array<Row>;
   prepares?: Array<any>;
 }
+class Savepoint {
+  private id_ = 0;
+  private set = new Set<number>();
+  constructor(readonly db: DB) {}
+  private _id(): number {
+    const set = this.set;
+    let val = this.id_;
+    while (true) {
+      val++;
+      if (!set.has(val)) {
+        set.add(val);
+        this.id_ = val;
+        break;
+      }
+    }
+    return val;
+  }
+  save(): number {
+    const id = this._id();
+    this.db.execute(`SAVEPOINT auto_worker_save_${id}`);
+    return id;
+  }
+  release(id: number) {
+    this.set.delete(id);
+    this.db.execute(`RELEASE auto_worker_save_${id}`);
+  }
+  rollback(id: number) {
+    this.set.delete(id);
+    this.db.execute(`ROLLBACK auto_worker_save_${id}`);
+  }
+}
 class Database {
   readonly db: DB;
+  readonly savepoint: Savepoint;
   constructor(req: OpenRequest) {
-    this.db = new DB(req.path, req.opts);
+    const db = new DB(req.path, req.opts);
+    this.db = db;
+    this.savepoint = new Savepoint(db);
   }
   close(req: CloseRequest) {
     const keys = this.keys_;
@@ -125,7 +160,11 @@ class Database {
       prepared: Prepared;
     }>();
     const keys = this.keys_;
+    let savepoint: number | undefined;
     try {
+      if (req.savepoint) {
+        savepoint = this.savepoint.save();
+      }
       for (const batch of req.batch) {
         if (typeof batch.sql === "number") {
           if (batch.method !== undefined) {
@@ -206,6 +245,10 @@ class Database {
           }
         }
       }
+
+      if (savepoint !== undefined) {
+        this.savepoint.release(savepoint);
+      }
     } catch (e) {
       for (const p of ps) {
         try {
@@ -213,6 +256,9 @@ class Database {
           keys.delete(p.id);
         } catch (_) { //
         }
+      }
+      if (savepoint !== undefined) {
+        this.savepoint.rollback(savepoint);
       }
       throw e;
     }
@@ -310,7 +356,6 @@ function doTask(data: RequestMessage) {
         break;
       case What.query:
         resp = db!.query(data as QueryRequest);
-        console.log(data, resp);
         break;
       case What.batch:
         resp = db!.batch(data as BatchRequest);
