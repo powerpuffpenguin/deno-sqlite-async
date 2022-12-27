@@ -12,7 +12,7 @@ export enum Conflict {
    * (other than the implied transaction that is created on every command)
    * then this algorithm works the same as ABORT.
    */
-  rollback,
+  rollback = 1,
 
   /**
    * When a constraint violation occurs,no ROLLBACK is executed

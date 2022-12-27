@@ -1,8 +1,14 @@
 import { Row, SqliteError } from "./sqlite.ts";
 import { RawDB, RawOpenOptions, RawOptions } from "./raw.ts";
-import { ExecuteOptions, Locker, RawInsertOptions } from "./executor.ts";
+import {
+  ExecuteOptions,
+  InsertOptions,
+  Locker,
+  RawInsertOptions,
+} from "./executor.ts";
 import { Locked, RW } from "./internal/rw.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
+import { Builder } from "./builder.ts";
 export interface OpenOptions extends RawOpenOptions {
   /**
    * current db version
@@ -141,7 +147,7 @@ export class DB {
   async rawInsert(
     sql: string,
     opts?: RawInsertOptions,
-  ) {
+  ): Promise<number | bigint> {
     const rows = await this.er_.insert(
       opts?.lock ?? Locker.shared,
       sql,
@@ -151,6 +157,42 @@ export class DB {
       },
     );
     const row = rows[0].sql![0];
-    return row[0];
+    return row[0] as number;
+  }
+  /**
+   * This method helps insert a map of [values]
+   * into the specified [table] and returns the
+   * id of the last inserted row.
+   *
+   * ```
+   *    const value = {
+   *      'age': 18,
+   *      'name': 'value'
+   *    };
+   *    const id = await db.insert(
+   *      'table',
+   *      value,
+   *      conflictAlgorithm: ConflictAlgorithm.replace,
+   *    );
+   * ```
+   * 0 could be returned for some specific conflict algorithms if not inserted.
+   */
+  async insert(
+    table: string,
+    values: Record<string, any>,
+    opts?: InsertOptions,
+  ): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.insert(table, values, opts?.conflict);
+    const rows = await this.er_.insert(
+      opts?.lock ?? Locker.shared,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+    const row = rows[0].sql![0];
+    return row[0] as number;
   }
 }
