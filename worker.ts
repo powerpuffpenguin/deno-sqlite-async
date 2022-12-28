@@ -59,6 +59,7 @@ interface CloseRequest extends RequestMessage {
 }
 interface ExecuteRequest extends RequestMessage {
   sql: string;
+  args?: QueryParameterSet;
 }
 interface QueryRequest extends RequestMessage {
   sql: string;
@@ -150,7 +151,11 @@ class Database {
     this.db.close(req.force);
   }
   execute(req: ExecuteRequest) {
-    this.db.execute(req.sql);
+    if (req.args) {
+      this.db.query(req.sql, req.args);
+    } else {
+      this.db.execute(req.sql);
+    }
   }
   query(req: QueryRequest) {
     if (req.entries) {

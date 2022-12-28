@@ -1,6 +1,16 @@
 // deno-lint-ignore-file no-explicit-any
 import { Context } from "../deps/easyts/context/mod.ts";
-import { InvokeOptions, What } from "../raw_types.ts";
+import {
+  Caller as ICaller,
+  InvokeBatch,
+  InvokeBatchResult,
+  InvokeExecute,
+  InvokeMethod,
+  InvokeOptions,
+  InvokeQuery,
+  InvokeQueryEntries,
+  What,
+} from "../caller.ts";
 import {
   Chan,
   Completer,
@@ -8,7 +18,13 @@ import {
   ReadChannel,
   selectChan,
 } from "../deps/easyts/mod.ts";
-import { SqliteError, Status } from "../sqlite.ts";
+import {
+  Row,
+  RowObject,
+  SqliteError,
+  SqliteOptions,
+  Status,
+} from "../sqlite.ts";
 
 export interface InvokeResponse {
   code: number;
@@ -22,7 +38,7 @@ export interface Task {
   req: any;
   c: Completer<any>;
 }
-export class Caller {
+export class Caller implements ICaller {
   private ch_ = new Chan<Task>();
   private done_ = new Chan<void>();
   private done2_ = new Chan<void>();
@@ -178,6 +194,75 @@ export class Caller {
         task.c.reject(new SqliteError(`db already closed: ${this.path}`));
         break;
     }
+  }
+  open(opts: {
+    ctx?: Context;
+    path: string;
+    opts?: SqliteOptions;
+  }): Promise<undefined> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.open,
+        path: opts.path,
+        opts: opts.opts,
+      },
+    });
+  }
+  execute(opts: InvokeExecute): Promise<undefined> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.execute,
+        sql: opts.sql,
+      },
+    });
+  }
+  query(opts: InvokeQuery): Promise<Array<Row>>;
+  query(opts: InvokeQueryEntries): Promise<Array<RowObject>>;
+  query(
+    opts: InvokeQuery | InvokeQueryEntries,
+  ): Promise<Array<Row | RowObject>> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.query,
+        sql: opts.sql,
+        args: opts.args,
+        entries: opts.entries,
+      },
+    });
+  }
+  batch(opts: InvokeBatch): Promise<Array<InvokeBatchResult>> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.batch,
+        savepoint: opts.savepoint,
+        batch: opts.batch,
+      },
+    });
+  }
+  prepare(opts: InvokeExecute): Promise<number> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.prepare,
+        sql: opts.sql,
+      },
+    });
+  }
+  method(opts: InvokeMethod): Promise<any> {
+    return this.invoke({
+      ctx: opts.ctx,
+      req: {
+        what: What.method,
+        sql: opts.sql,
+        args: opts.args,
+        result: opts.result,
+        method: opts.method,
+      },
+    });
   }
 }
 

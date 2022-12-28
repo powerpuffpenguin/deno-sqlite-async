@@ -6,8 +6,9 @@ import {
   RowObject,
   SqliteError,
 } from "./sqlite.ts";
-import { PreparedOptions, RawDB, RawOpenOptions, RawPrepared } from "./raw.ts";
-import { InvokeOptions, Method, What } from "./raw_types.ts";
+import { RawDB, RawOpenOptions, RawPrepared } from "./raw.ts";
+
+import { InvokeOptions, Method, What } from "./caller.ts";
 import {
   DeleteOptions,
   ExecuteOptions,
@@ -21,7 +22,7 @@ import { Locked, RW } from "./internal/rw.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
 import { Builder } from "./builder.ts";
 import { log } from "./log.ts";
-import { ArgsOptions } from "./options.ts";
+import { ArgsOptions, ContextOptions } from "./options.ts";
 
 export interface OpenOptions extends RawOpenOptions {
   /**
@@ -154,7 +155,7 @@ export class _Executor {
       this._log(Date.now() - at, sql, opts?.args);
     }
   }
-  async prepare(sql: string, opts?: PreparedOptions): Promise<Prepared> {
+  async prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
     const prepare = await this.db.prepare(sql, opts);
     return new Prepared(this, prepare);
   }
@@ -415,7 +416,7 @@ export class DB {
       },
     );
   }
-  prepare(sql: string, opts?: PreparedOptions): Promise<Prepared> {
+  prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
     return this.er_.prepare(sql, opts);
   }
 }

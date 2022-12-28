@@ -6,3 +6,10 @@ export interface ContextOptions {
 export interface ArgsOptions extends ContextOptions {
   args?: QueryParameterSet;
 }
+export interface BatchOptions extends ContextOptions {
+  ctx?: Context;
+  /**
+   * Execute in SAVEPOINT if set to true
+   */
+  savepoint?: boolean;
+}

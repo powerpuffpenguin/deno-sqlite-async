@@ -7,16 +7,16 @@ import {
   SqliteError,
   SqliteOptions,
 } from "./sqlite.ts";
-import { What } from "./raw_types.ts";
 import { Caller } from "./internal/caller.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
-import { ArgsOptions } from "./options.ts";
+import { ArgsOptions, BatchOptions, ContextOptions } from "./options.ts";
 import {
-  BatchMethod,
+  Caller as ICaller,
   InvokeBatchElement,
+  InvokeBatchMethod,
   InvokeOptions,
   Method,
-} from "./raw_types.ts";
+} from "./caller.ts";
 
 export interface RawOpenOptions extends SqliteOptions {
   /**
@@ -78,12 +78,9 @@ export class RawDB {
 
   private async _init(path: string, opts?: SqliteOptions) {
     try {
-      await this.caller_.invoke({
-        req: {
-          what: What.open,
-          path: path,
-          opts: opts,
-        },
+      await this.caller_.open({
+        path: path,
+        opts: opts,
       });
     } catch (e) {
       this.close();
@@ -93,25 +90,12 @@ export class RawDB {
   /**
    * Executing sql does not need to return results
    */
-  async execute(sql: string, opts?: ArgsOptions): Promise<void> {
-    if (opts?.args) {
-      await this.caller_.invoke({
-        ctx: opts.ctx,
-        req: {
-          what: What.query,
-          sql: sql,
-          args: opts.args,
-        },
-      });
-    } else {
-      await this.caller_.invoke({
-        ctx: opts?.ctx,
-        req: {
-          what: What.execute,
-          sql: sql,
-        },
-      });
-    }
+  execute(sql: string, opts?: ArgsOptions): Promise<void> {
+    return this.caller_.execute({
+      ctx: opts?.ctx,
+      sql: sql,
+      args: opts?.args,
+    });
   }
   /**
    * Execute sql and get the returned result
@@ -120,13 +104,10 @@ export class RawDB {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<Array<Row>> {
-    return this.caller_.invoke({
+    return this.caller_.query({
       ctx: opts?.ctx,
-      req: {
-        what: What.query,
-        sql: sql,
-        args: opts?.args,
-      },
+      sql: sql,
+      args: opts?.args,
     });
   }
   /**
@@ -136,14 +117,11 @@ export class RawDB {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<Array<RowObject>> {
-    return this.caller_.invoke({
+    return this.caller_.query({
       ctx: opts?.ctx,
-      req: {
-        what: What.query,
-        sql: sql,
-        args: opts?.args,
-        entries: true,
-      },
+      sql: sql,
+      args: opts?.args,
+      entries: true,
     });
   }
   /**
@@ -151,17 +129,14 @@ export class RawDB {
    */
   async batch(
     opts: RawBatchOptions,
-  ): Promise<Array<BatchResult>> {
+  ): Promise<Array<RawBatchResult>> {
     const batch = this._formatBatch(opts.batch);
 
-    const arrs: Array<BatchResult> = await this.caller_.invoke({
+    const arrs: Array<RawBatchResult> = await this.caller_.batch({
       ctx: opts.ctx,
-      req: {
-        what: What.batch,
-        savepoint: opts.savepoint,
-        batch: batch,
-      },
-    });
+      savepoint: opts.savepoint,
+      batch: batch,
+    }) as any;
     for (const item of arrs) {
       if (item.prepared !== undefined) {
         item.prepared = new RawPrepared(
@@ -196,22 +171,31 @@ export class RawDB {
       })
       : batch as Array<InvokeBatchElement>;
   }
-  async prepare(sql: string, opts?: PreparedOptions): Promise<RawPrepared> {
-    const id = await this.caller_.invoke({
+  /**
+   * prepare a sql statement so that it can be repeated multiple times without parsing it each time
+   */
+  async prepare(sql: string, opts?: ContextOptions): Promise<RawPrepared> {
+    const id = await this.caller_.prepare({
       ctx: opts?.ctx,
-      req: {
-        what: What.prepare,
-        sql: sql,
-      },
+      sql: sql,
     });
     return new RawPrepared(this.caller_, id);
   }
+  /**
+   * Call the core interface directly
+   */
   invoke(opts: InvokeOptions): Promise<any> {
     return this.caller_.invoke(opts);
   }
+  /**
+   * Return to core implementation
+   */
+  caller(): ICaller {
+    return this.caller_;
+  }
 }
 
-export interface BatchResult {
+export interface RawBatchResult {
   prepared?: RawPrepared;
   sql?: Array<Row>;
   prepare?: Array<ColumnName | Row | RowObject> | Row | RowObject | string;
@@ -255,11 +239,7 @@ export interface RawBatch {
   /**
    * prepare batch method
    */
-  methods?: Array<BatchMethod>;
-}
-
-export interface PreparedOptions {
-  ctx?: Context;
+  methods?: Array<InvokeBatchMethod>;
 }
 
 export class RawPrepared {
@@ -280,29 +260,23 @@ export class RawPrepared {
   }
   private async _close(id: number) {
     try {
-      await this.caller_.invoke({
-        req: {
-          what: What.method,
-          sql: id,
-          method: Method.close,
-        },
+      await this.caller_.method({
+        sql: id,
+        method: Method.close,
       });
     } catch (_) { //
     }
   }
-  columns(opts?: PreparedOptions): Promise<Array<ColumnName>> {
+  columns(opts?: ContextOptions): Promise<Array<ColumnName>> {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.columns,
-        result: true,
-      },
+      sql: id,
+      method: Method.columns,
+      result: true,
     });
   }
   first(opts?: ArgsOptions): Promise<Row | undefined> {
@@ -310,15 +284,12 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.first,
-        args: opts?.args,
-        result: true,
-      },
+      sql: id,
+      method: Method.first,
+      args: opts?.args,
+      result: true,
     });
   }
   firstEntry(
@@ -328,15 +299,12 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.firstEntry,
-        args: opts?.args,
-        result: true,
-      },
+      sql: id,
+      method: Method.firstEntry,
+      args: opts?.args,
+      result: true,
     });
   }
   all(
@@ -346,15 +314,12 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.all,
-        args: opts?.args,
-        result: true,
-      },
+      sql: id,
+      method: Method.all,
+      args: opts?.args,
+      result: true,
     });
   }
   allEntries(
@@ -364,15 +329,12 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.allEntries,
-        args: opts?.args,
-        result: true,
-      },
+      sql: id,
+      method: Method.allEntries,
+      args: opts?.args,
+      result: true,
     });
   }
   execute(
@@ -382,14 +344,11 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.execute,
-        args: opts?.args,
-      },
+      sql: id,
+      method: Method.execute,
+      args: opts?.args,
     });
   }
   expandSql(
@@ -399,18 +358,15 @@ export class RawPrepared {
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
     }
-    return this.caller_.invoke({
+    return this.caller_.method({
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: id,
-        method: Method.expandSql,
-        args: opts?.args,
-        result: true,
-      },
+      sql: id,
+      method: Method.expandSql,
+      args: opts?.args,
+      result: true,
     });
   }
-  async batch(methods: Array<BatchMethod>, opts?: PreparedOptions) {
+  async batch(methods: Array<InvokeBatchMethod>, opts?: BatchOptions) {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
@@ -423,18 +379,16 @@ export class RawPrepared {
       }
     }
 
-    return await this.caller_.invoke({
+    return await this.caller_.batch({
       ctx: opts?.ctx,
-      req: {
-        what: What.batch,
-        batch: [
-          {
-            sql: id,
-            result: result,
-            methods: methods,
-          },
-        ],
-      },
+      savepoint: opts?.savepoint,
+      batch: [
+        {
+          sql: id,
+          result: result,
+          methods: methods,
+        },
+      ],
     });
   }
 }
