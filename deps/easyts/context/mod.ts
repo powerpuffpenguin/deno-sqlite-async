@@ -1,1 +1,1 @@
-export * from "file:///home/king/project/node/easyts/deno/context/mod.ts";
+export * from "https://deno.land/x/easyts@0.1.2/context/mod.ts";

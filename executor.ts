@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { Context } from "./deps/easyts/context/mod.ts";
-import { QueryParameterSet, Row } from "./sqlite.ts";
+import { QueryParameterSet, Row, RowObject } from "./sqlite.ts";
 /**
  * Insert/Update conflict resolver
  */
@@ -80,9 +80,6 @@ export interface ExecuteOptions extends Options {
   args?: QueryParameterSet;
 }
 
-export interface RawInsertOptions extends ExecuteOptions {
-  conflict?: Conflict;
-}
 export interface InsertOptions extends Options {
   conflict?: Conflict;
 }
@@ -93,7 +90,7 @@ export interface QueryOptions extends ExecuteOptions {
   groupBy?: string;
   having?: string;
   orderBy?: string;
-  limit?: number | bigint;
+  limit?: number;
   offset?: number | bigint;
 }
 export interface UpdateOptions extends ExecuteOptions {
@@ -124,7 +121,7 @@ export interface Executor {
    */
   rawInsert(
     sql: string,
-    opts?: RawInsertOptions,
+    opts?: ExecuteOptions,
   ): Promise<number | bigint>;
   /**
    * This method helps insert a map of [values]
@@ -163,10 +160,10 @@ export interface Executor {
    *  });
    * ```
    */
-  query<R extends Row = Row>(
+  query(
     table: string,
     opts?: QueryOptions,
-  ): Promise<Array<R>>;
+  ): Promise<Array<RowObject>>;
   /**
    * Executes a raw SQL SELECT query and returns a list
    * of the rows that were found.
@@ -175,10 +172,11 @@ export interface Executor {
    * const rows = await database.rawQuery('SELECT * FROM Test');
    * ```
    */
-  rawQuery<R extends Row = Row>(
+  rawQuery(
     sql: string,
     opts?: ExecuteOptions,
-  ): Promise<Array<R>>;
+  ): Promise<Array<RowObject>>;
+
   /**
    * Executes a raw SQL UPDATE query and returns
    * the number of changes made.
@@ -189,7 +187,7 @@ export interface Executor {
    *   args: ['updated name', '9876', 'some name']});
    * ```
    */
-  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number>;
+  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | bigint>;
 
   /**
    * Convenience method for updating rows in the database. Returns
@@ -200,14 +198,14 @@ export interface Executor {
    *
    * ```
    * const count = await db.update(tableTodo, todo.toMap(), {
-   *    where: '$columnId = ?', args: [todo.id]});
+   *    where: `${columnId} = ?`, args: [todo.id]});
    * ```
    */
   update(
     table: string,
     values: Record<string, any>,
     opts?: UpdateOptions,
-  ): Promise<number>;
+  ): Promise<number | bigint>;
 
   /**
    * Executes a raw SQL DELETE query and returns the
@@ -218,7 +216,7 @@ export interface Executor {
    *   .rawDelete('DELETE FROM Test WHERE name = ?', {args: ['another name']});
    * ```
    */
-  rawDelete(sql: string, opts?: ExecuteOptions): Promise<number>;
+  rawDelete(sql: string, opts?: ExecuteOptions): Promise<number | bigint>;
   /**
    * Convenience method for deleting rows in the database.
    *
@@ -232,7 +230,7 @@ export interface Executor {
    *  const count = await db.delete(tableTodo, {where: 'columnId = ?', args: [id]});
    * ```
    */
-  delete(table: string, opts?: DeleteOptions): Promise<number>;
+  delete(table: string, opts?: DeleteOptions): Promise<number | bigint>;
 
   /**
    * Creates a batch, used for performing multiple operation
@@ -250,9 +248,6 @@ export interface BatchExecuteOptions {
   args?: QueryParameterSet;
 }
 
-export interface BatchRawInsertOptions extends BatchExecuteOptions {
-  conflict?: Conflict;
-}
 export interface BatchInsertOptions {
   conflict?: Conflict;
 }
@@ -277,12 +272,12 @@ export interface BatchCommit {
   ctx: Context;
 }
 export interface Batch {
-  commit<R extends Row = Row>(opts?: BatchCommit): Array<Array<R>>;
+  commit(opts?: BatchCommit): Array<Array<Row | RowObject>>;
 
   /**
    * @see {@link Executor.rawInsert}
    */
-  rawInsert(sql: string, opts?: BatchRawInsertOptions): void;
+  rawInsert(sql: string, opts?: BatchExecuteOptions): void;
 
   /**
    * @see {@link Executor.insert}

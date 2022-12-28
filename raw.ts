@@ -9,6 +9,7 @@ import {
 } from "./sqlite.ts";
 import { Caller, What } from "./internal/caller.ts";
 import { background, Context } from "./deps/easyts/context/mod.ts";
+import { ArgsOptions } from "./options.ts";
 
 export interface RawOpenOptions extends SqliteOptions {
   /**
@@ -21,10 +22,6 @@ export interface RawOpenOptions extends SqliteOptions {
   task?: number;
 }
 
-export interface RawOptions {
-  ctx?: Context;
-  args?: QueryParameterSet;
-}
 export class RawDB {
   static async open(
     path = ":memory:",
@@ -87,7 +84,7 @@ export class RawDB {
   /**
    * Executing sql does not need to return results
    */
-  async execute(sql: string, opts?: RawOptions): Promise<void> {
+  async execute(sql: string, opts?: ArgsOptions): Promise<void> {
     if (opts?.args) {
       await this.caller_.invoke(opts.ctx, {
         what: What.query,
@@ -106,12 +103,26 @@ export class RawDB {
    */
   query(
     sql: string,
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<Array<Row>> {
     return this.caller_.invoke(opts?.ctx, {
       what: What.query,
       sql: sql,
       args: opts?.args,
+    });
+  }
+  /**
+   * Execute sql and get the returned result
+   */
+  queryEntries(
+    sql: string,
+    opts?: ArgsOptions,
+  ): Promise<Array<RowObject>> {
+    return this.caller_.invoke(opts?.ctx, {
+      what: What.query,
+      sql: sql,
+      args: opts?.args,
+      entries: true,
     });
   }
   /**
@@ -151,6 +162,7 @@ export class RawDB {
             sql: v.sql.id,
             args: v.args,
             result: v.result,
+            entries: v.entries,
             method: v.method,
             methods: v.methods,
           };
@@ -159,14 +171,22 @@ export class RawDB {
       })
       : batch;
   }
-  async prepare(sql: string, opts?: RawOptions): Promise<RawPrepared> {
+  async prepare(sql: string, opts?: PreparedOptions): Promise<RawPrepared> {
     const id = await this.caller_.invoke(opts?.ctx, {
       what: What.prepare,
       sql: sql,
     });
     return new RawPrepared(this.caller_, id);
   }
+  invoke(opts: InvokeOptions): Promise<any> {
+    return this.caller_.invoke(opts?.ctx, opts.req);
+  }
 }
+export interface InvokeOptions {
+  ctx?: Context;
+  req: any;
+}
+
 export interface BatchResult {
   prepared?: RawPrepared;
   sql?: Array<Row>;
@@ -197,6 +217,10 @@ export interface RawBatch {
    */
   result?: boolean;
   /**
+   * Return query results as RowObject
+   */
+  entries?: boolean;
+  /**
    * If 'sql' is a string and 'prepare' is true create a Prepared
    */
   prepare?: boolean;
@@ -225,13 +249,16 @@ export enum Method {
   expandSql = "expandSql",
 }
 export interface PreparedOptions {
-  ctx: Context;
+  ctx?: Context;
 }
 
 export class RawPrepared {
   private id_?: number;
   constructor(private readonly caller_: Caller, readonly id: number) {
     this.id_ = id;
+  }
+  get isClosed(): boolean {
+    return this.id_ !== undefined;
   }
   close() {
     const id = this.id_;
@@ -251,7 +278,7 @@ export class RawPrepared {
     } catch (_) { //
     }
   }
-  columns(opts?: PreparedOptions) {
+  columns(opts?: PreparedOptions): Promise<Array<ColumnName>> {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
@@ -260,9 +287,10 @@ export class RawPrepared {
       what: What.method,
       sql: id,
       method: Method.columns,
+      result: true,
     });
   }
-  first(opts?: RawOptions): Promise<Row | undefined> {
+  first(opts?: ArgsOptions): Promise<Row | undefined> {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
@@ -276,7 +304,7 @@ export class RawPrepared {
     });
   }
   firstEntry(
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<RowObject | undefined> {
     const id = this.id_;
     if (id == undefined) {
@@ -291,7 +319,7 @@ export class RawPrepared {
     });
   }
   all(
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<Array<Row>> {
     const id = this.id_;
     if (id == undefined) {
@@ -306,7 +334,7 @@ export class RawPrepared {
     });
   }
   allEntries(
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<Array<RowObject>> {
     const id = this.id_;
     if (id == undefined) {
@@ -321,7 +349,7 @@ export class RawPrepared {
     });
   }
   execute(
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<undefined> {
     const id = this.id_;
     if (id == undefined) {
@@ -335,7 +363,7 @@ export class RawPrepared {
     });
   }
   expandSql(
-    opts?: RawOptions,
+    opts?: ArgsOptions,
   ): Promise<string> {
     const id = this.id_;
     if (id == undefined) {

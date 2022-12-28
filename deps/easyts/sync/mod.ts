@@ -1,1 +1,1 @@
-export * from "file:///home/king/project/node/easyts/deno/sync/mod.ts";
+export * from "https://deno.land/x/easyts@0.1.2/sync/mod.ts";

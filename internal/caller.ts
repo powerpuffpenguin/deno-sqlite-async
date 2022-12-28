@@ -93,10 +93,11 @@ export class Caller {
       } catch (_) { //
       }
     }
+    console.log("--------------taskclose");
     // execute close
     task = {
       req: {
-        what: 1,
+        what: What.close,
       },
       c: new Completer(),
     };

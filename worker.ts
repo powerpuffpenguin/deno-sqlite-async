@@ -63,6 +63,7 @@ interface ExecuteRequest extends RequestMessage {
 interface QueryRequest extends RequestMessage {
   sql: string;
   args?: QueryParameterSet;
+  entries?: boolean;
 }
 interface BatchRequest extends RequestMessage {
   savepoint?: boolean;
@@ -71,6 +72,7 @@ interface BatchRequest extends RequestMessage {
     prepare?: boolean;
     args?: QueryParameterSet;
     result?: boolean;
+    entries?: boolean;
     method?: string;
     methods?: Array<{
       method: string;
@@ -93,7 +95,7 @@ interface MethodResult {
 }
 interface BatchResult extends MethodResult {
   prepared?: number;
-  sql?: Array<Row>;
+  sql?: Array<Row | RowObject>;
   prepares?: Array<any>;
 }
 class Savepoint {
@@ -107,7 +109,11 @@ class Savepoint {
       val++;
       if (!set.has(val)) {
         set.add(val);
-        this.id_ = val;
+        if (val == Number.MAX_SAFE_INTEGER) {
+          this.id_ = 0;
+        } else {
+          this.id_ = val;
+        }
         break;
       }
     }
@@ -147,7 +153,12 @@ class Database {
     this.db.execute(req.sql);
   }
   query(req: QueryRequest) {
-    this.db.prepareQuery;
+    if (req.entries) {
+      return this.db.queryEntries(
+        req.sql,
+        req.args,
+      );
+    }
     return this.db.query(
       req.sql,
       req.args,
@@ -219,7 +230,7 @@ class Database {
             }
           }
         } else if (batch.prepare) {
-          const id = this.id_++;
+          const id = this._id();
           const prepared = this.db.prepareQuery(batch.sql);
           keys.set(id, prepared);
           ps.push({
@@ -234,7 +245,9 @@ class Database {
         } else {
           if (batch.result) {
             result.push({
-              sql: this.db.query(batch.sql, batch.args),
+              sql: batch.entries
+                ? this.db.queryEntries(batch.sql, batch.args)
+                : this.db.query(batch.sql, batch.args),
             });
           } else {
             if (batch.args) {
@@ -258,14 +271,17 @@ class Database {
         }
       }
       if (savepoint !== undefined) {
-        this.savepoint.rollback(savepoint);
+        try {
+          this.savepoint.rollback(savepoint);
+        } catch (_) { //
+        }
       }
       throw e;
     }
     return result;
   }
   prepare(req: PrepareRequest) {
-    const id = this.id_++;
+    const id = this._id();
     this.keys_.set(id, this.db.prepareQuery(req.sql));
     return id;
   }
@@ -331,7 +347,22 @@ class Database {
   method(req: MethodRequest) {
     return this._method(req.sql, req.method, req.args, req.result)?.prepare;
   }
-  private id_ = Number.MIN_SAFE_INTEGER;
+  private _id() {
+    const keys = this.keys_;
+    let val = this.id_;
+    while (true) {
+      val++;
+      if (!keys.has(val)) {
+        if (val == Number.MAX_SAFE_INTEGER) {
+          this.id_ = 0;
+        } else {
+          this.id_ = val;
+        }
+        return val;
+      }
+    }
+  }
+  private id_ = 0;
   private keys_ = new Map<number, Prepared>();
 }
 let db: Database | undefined;
