@@ -1,12 +1,13 @@
 // deno-lint-ignore-file no-explicit-any
-import { QueryParameterSet, Row, RowObject, SqliteError } from "./sqlite.ts";
 import {
-  InvokeOptions,
-  PreparedOptions,
-  RawDB,
-  RawOpenOptions,
-  RawPrepared,
-} from "./raw.ts";
+  ColumnName,
+  QueryParameterSet,
+  Row,
+  RowObject,
+  SqliteError,
+} from "./sqlite.ts";
+import { PreparedOptions, RawDB, RawOpenOptions, RawPrepared } from "./raw.ts";
+import { InvokeOptions, Method, What } from "./raw_types.ts";
 import {
   DeleteOptions,
   ExecuteOptions,
@@ -21,6 +22,7 @@ import { Context } from "./deps/easyts/context/mod.ts";
 import { Builder } from "./builder.ts";
 import { log } from "./log.ts";
 import { ArgsOptions } from "./options.ts";
+
 export interface OpenOptions extends RawOpenOptions {
   /**
    * current db version
@@ -427,18 +429,20 @@ export class Prepared {
   close() {
     this.prepare_.close();
   }
-  columns(opts?: Options) {
+  columns(opts?: Options): Promise<Array<ColumnName>> {
     const prepare = this.prepare_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    // this.er_.invoke()
-
-    // return this.caller_.invoke(opts?.ctx, {
-    //   what: What.method,
-    //   sql: id,
-    //   method: Method.columns,
-    // });
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.columns,
+        result: true,
+      },
+    });
   }
   // first(opts?: RawOptions): Promise<Row | undefined> {
   //   const id = this.id_;

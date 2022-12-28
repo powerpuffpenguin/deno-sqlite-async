@@ -84,22 +84,25 @@ export class RW {
       }
     }
   }
-  async _send(ctx: Context, ch: WriteChannel<number>): Promise<void> {
-    if (ctx.isClosed) {
-      throw ctx.err;
+  async _send(
+    ctx: Context | undefined,
+    ch: WriteChannel<number>,
+  ): Promise<void> {
+    if (ctx?.isClosed) {
+      throw ctx!.err;
     }
     const done = this.done;
     if (done.isClosed) {
       throw errClosed;
     }
     const cdone = done.readCase();
-    const cd = ctx.done.readCase();
+    const cd = ctx?.done.readCase()!;
     const cw = ch.writeCase(0);
     switch (await selectChan(cdone, cd, cw)) {
       case cdone:
         throw errClosed;
       case cd:
-        throw ctx.err;
+        throw ctx!.err;
       case cw:
         break;
     }
@@ -112,7 +115,7 @@ export class RW {
     return this._send(ctx, this.wu_);
   }
   async readLock(ctx?: Context): Promise<Locked> {
-    await this._send(ctx ?? background(), this.rl_);
+    await this._send(ctx, this.rl_);
     return new _Locked(this, true);
   }
   readUnlock(ctx: Context) {

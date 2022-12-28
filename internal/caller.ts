@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
-import { background, Context } from "../deps/easyts/context/mod.ts";
+import { Context } from "../deps/easyts/context/mod.ts";
+import { InvokeOptions, What } from "../raw_types.ts";
 import {
   Chan,
   Completer,
@@ -8,16 +9,7 @@ import {
   selectChan,
 } from "../deps/easyts/mod.ts";
 import { SqliteError, Status } from "../sqlite.ts";
-export enum What {
-  open = 1,
-  close,
-  execute = 10,
-  query,
-  batch = 20,
-  prepare = 30,
-  method,
-  task = 40,
-}
+
 export interface InvokeResponse {
   code: number;
   message?: string;
@@ -33,6 +25,7 @@ export interface Task {
 export class Caller {
   private ch_ = new Chan<Task>();
   private done_ = new Chan<void>();
+  private done2_ = new Chan<void>();
   done(): ReadChannel<void> {
     return this.done_;
   }
@@ -75,13 +68,14 @@ export class Caller {
       }
     };
     const ch = this.ch_.readCase();
+    const done2 = this.done2_.readCase();
     const done = this.done_.readCase();
     const tasks = new Array<Task>(this.task);
     while (true) {
-      if (done == await selectChan(ch, done)) {
+      if (ch != await selectChan(ch, done, done2)) {
         break;
       }
-      task = this._merge(tasks, ch, done, ch.read()!);
+      task = this._merge(tasks, ch, done, done2, ch.read()!);
       if (!task) {
         break;
       }
@@ -93,7 +87,6 @@ export class Caller {
       } catch (_) { //
       }
     }
-    console.log("--------------taskclose");
     // execute close
     task = {
       req: {
@@ -114,17 +107,19 @@ export class Caller {
     tasks: Array<Task>,
     ch: ReadCase<Task>,
     done: ReadCase<void>,
+    done2: ReadCase<void>,
     task: Task,
   ): Task | undefined {
     let i = 0;
     tasks[i++] = task;
     Merge:
     while (i < tasks.length) {
-      switch (selectChan(0, ch, done)) {
+      switch (selectChan(0, ch, done, done2)) {
         case ch:
           tasks[i++] = ch.read()!;
           break;
         case done:
+        case done2:
           {
             const e = new SqliteError(`db already closed: ${this.path}`);
             for (let index = 0; index < i; index++) {
@@ -149,35 +144,35 @@ export class Caller {
       return false;
     }
     this.done_.close();
+    this.done2_.close();
     return true;
   }
   async wait() {
     await this.closed_.read();
   }
 
-  invoke(ctx: Context | undefined, req: any): Promise<any> {
-    if (!ctx) {
-      ctx = background();
-    }
-    if (ctx.isClosed) {
-      throw ctx.err;
+  invoke(
+    opts: InvokeOptions,
+  ): Promise<any> {
+    if (opts?.ctx?.isClosed) {
+      throw opts.ctx.err;
     } else if (this.done_.isClosed) {
       throw new SqliteError(`db already closed: ${this.path}`);
     }
     const task: Task = {
-      req: req,
+      req: opts.req,
       c: new Completer(),
     };
-    this._invoke(ctx, task);
+    this._invoke(opts?.ctx, task);
     return task.c.promise;
   }
-  private async _invoke(ctx: Context, task: Task) {
-    const done = ctx.done.readCase();
+  private async _invoke(ctx: Context | undefined, task: Task) {
+    const done = ctx?.done.readCase();
     const done2 = this.done_.readCase();
     const cch = this.ch_.writeCase(task);
-    switch (await selectChan(done, done2, cch)) {
+    switch (await selectChan(done!, done2, cch)) {
       case done:
-        task.c.reject(ctx.err);
+        task.c.reject(ctx!.err);
         break;
       case done2:
         task.c.reject(new SqliteError(`db already closed: ${this.path}`));
@@ -185,6 +180,7 @@ export class Caller {
     }
   }
 }
+
 class Tasks {
   c = new Completer<Array<InvokeResponse>>();
   req: any;
