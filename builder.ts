@@ -90,7 +90,7 @@ function buildQuery(table: string, opts?: PrepareQueryOptions): string {
   const columns = opts?.columns;
   const len = columns?.length ?? 0;
   if (len == 0) {
-    sql.push("* ");
+    sql.push("*");
   } else {
     for (let i = 0; i < len; i++) {
       if (i == 0) {
@@ -99,7 +99,6 @@ function buildQuery(table: string, opts?: PrepareQueryOptions): string {
         sql.push(`, ${escapeName(columns![i])}`);
       }
     }
-    sql.push(" ");
   }
   sql.push(` FROM ${escapeName(table)}`);
   const where = opts?.where ?? "";

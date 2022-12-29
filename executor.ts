@@ -325,7 +325,8 @@ export interface Preparor {
   /**
    * return resource id
    */
-  get id(): number;
+  readonly id: number;
+  readonly sql: string;
   /**
    * Whether the resource has been closed
    */

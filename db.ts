@@ -99,23 +99,25 @@ export class _Executor {
         return this.rw.lock(ctx);
     }
   }
-  private _log(used: number, sql: string, args?: QueryParameterSet) {
-    if (this.showSQL) {
-      if (args === undefined) {
-        log.log(sql, "--", `${used}ms`);
-      } else {
-        log.log(sql, " --", args, `${used}ms`);
-      }
+  private _log(at: number | undefined, sql: string, args?: QueryParameterSet) {
+    if (at === undefined) {
+      return;
+    }
+    const used = Date.now() - at;
+    if (args === undefined) {
+      log.log(sql, "--", `${used}ms`);
+    } else {
+      log.log(sql, " --", args, `${used}ms`);
     }
   }
   async execute(lock: Locker, sql: string, opts?: ArgsOptions): Promise<void> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts?.ctx);
-    const at = Date.now();
     try {
       await this.db.execute(sql, opts);
     } finally {
       locked?.unlock();
-      this._log(Date.now() - at, sql, opts?.args);
+      this._log(at, sql, opts?.args);
     }
   }
   async query(
@@ -123,13 +125,13 @@ export class _Executor {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<Array<Row>> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts?.ctx);
-    const at = Date.now();
     try {
       return await this.db.query(sql, opts);
     } finally {
       locked?.unlock();
-      this._log(Date.now() - at, sql, opts?.args);
+      this._log(at, sql, opts?.args);
     }
   }
   async queryEntries(
@@ -137,13 +139,13 @@ export class _Executor {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<Array<RowObject>> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts?.ctx);
-    const at = Date.now();
     try {
       return await this.db.queryEntries(sql, opts);
     } finally {
       locked?.unlock();
-      this._log(Date.now() - at, sql, opts?.args);
+      this._log(at, sql, opts?.args);
     }
   }
   async insert(
@@ -151,8 +153,8 @@ export class _Executor {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<number | bigint> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts?.ctx);
-    const at = Date.now();
     try {
       const rows = await this.db.batch({
         ctx: opts?.ctx,
@@ -173,7 +175,7 @@ export class _Executor {
       return row[0];
     } finally {
       locked?.unlock();
-      this._log(Date.now() - at, sql, opts?.args);
+      this._log(at, sql, opts?.args);
     }
   }
   async changes(
@@ -181,8 +183,8 @@ export class _Executor {
     sql: string,
     opts?: ArgsOptions,
   ): Promise<number | bigint> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts?.ctx);
-    const at = Date.now();
     try {
       const rows = await this.db.batch({
         ctx: opts?.ctx,
@@ -203,7 +205,7 @@ export class _Executor {
       return row[0] as number;
     } finally {
       locked?.unlock();
-      this._log(Date.now() - at, sql, opts?.args);
+      this._log(at, sql, opts?.args);
     }
   }
   async prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
@@ -221,12 +223,28 @@ export class _Executor {
   async batch(
     lock: Locker,
     opts: RawBatchOptions,
+    sqls: Array<{
+      sql: string;
+      args?: QueryParameterSet;
+    }>,
   ): Promise<Array<RawBatchResult>> {
+    const at = this.showSQL ? Date.now() : undefined;
     const locked = await this._locked(lock, opts.ctx);
     try {
       return await this.db.batch(opts);
     } finally {
       locked?.unlock();
+      if (at !== undefined) {
+        const used = Date.now() - at;
+        for (const { sql, args } of sqls) {
+          if (args === undefined) {
+            log.log("batch:", sql);
+          } else {
+            log.log("batch:", sql, " --", args);
+          }
+        }
+        log.log("batch used:", `${used}ms`);
+      }
     }
   }
 }
@@ -558,6 +576,9 @@ export class Prepared implements Preparor {
   get id(): number {
     return this.prepared_.id;
   }
+  get sql(): string {
+    return this.prepared_.sql;
+  }
   get isClosed(): boolean {
     return this.closed_ || this.prepared_.isClosed;
   }
@@ -690,6 +711,10 @@ export class Batch implements BatchExecutor {
   private batch_ = new Array<RawBatch>();
   private keys_?: Map<number, string>;
   private values_?: Map<string, BatchValue>;
+  private sqls_ = new Array<{
+    sql: string;
+    args?: QueryParameterSet;
+  }>();
   constructor(private er_: _Executor) {}
   private lock_ = Locker.none;
   values() {
@@ -707,6 +732,7 @@ export class Batch implements BatchExecutor {
         savepoint: opts?.savepoint,
         batch: batch,
       },
+      this.sqls_,
     );
     for (const i of this.hook_) {
       const row = rows[i].prepare as Array<any>;
@@ -766,6 +792,10 @@ export class Batch implements BatchExecutor {
       },
     );
 
+    this.sqls_.push({
+      sql: sql,
+      args: opts?.args,
+    });
     this.lock_ = Locker.shared;
   }
   rawInsert(sql: string, opts?: BatchArgs): void {
@@ -784,6 +814,10 @@ export class Batch implements BatchExecutor {
       },
     );
 
+    this.sqls_.push({
+      sql: sql,
+      args: opts?.args,
+    });
     this.lock_ = Locker.shared;
   }
   insert(
@@ -796,6 +830,7 @@ export class Batch implements BatchExecutor {
 
     this.rawInsert(builder.sql(), {
       name: opts?.name,
+      args: builder.args(),
     });
   }
   private _change(sql: string, opts?: BatchArgs): void {
@@ -813,6 +848,11 @@ export class Batch implements BatchExecutor {
         result: true,
       },
     );
+
+    this.sqls_.push({
+      sql: sql,
+      args: opts?.args,
+    });
     this.lock_ = Locker.shared;
   }
   rawDelete(sql: string, opts?: BatchArgs): void {
@@ -851,25 +891,39 @@ export class Batch implements BatchExecutor {
       {
         sql: sql,
         args: opts?.args,
+        result: true,
+        entries: true,
       },
     );
 
+    this.sqls_.push({
+      sql: sql,
+      args: opts?.args,
+    });
     this.lock_ = Locker.shared;
   }
 
   query(table: string, opts?: BatchQueryArgs): void {
     const builder = new Builder();
     builder.query(table, opts);
+    const sql = builder.sql();
+    const args = builder.args();
 
     this._name(opts?.name);
     this.i_++;
     this.batch_.push(
       {
-        sql: builder.sql(),
-        args: builder.args(),
+        sql: sql,
+        args: args,
+        result: true,
+        entries: true,
       },
     );
 
+    this.sqls_.push({
+      sql: sql,
+      args: args,
+    });
     this.lock_ = Locker.shared;
   }
 
@@ -930,6 +984,19 @@ export class Batch implements BatchExecutor {
       method: method,
       result: true,
     });
+
+    switch (method) {
+      case Method.first:
+      case Method.firstEntry:
+      case Method.all:
+      case Method.allEntries:
+      case Method.execute:
+        this.sqls_.push({
+          sql: preparor.sql,
+          args: opts?.args,
+        });
+        break;
+    }
 
     if (method != Method.expandSql && method != Method.columns) {
       this.lock_ = Locker.shared;
