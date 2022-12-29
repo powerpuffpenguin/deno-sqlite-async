@@ -9,6 +9,7 @@ import {
   QueryOptions,
   UpdateOptions,
 } from "./executor.ts";
+
 export const escapeNames = new Set<string>();
 escapeNames.add("add");
 escapeNames.add("all");

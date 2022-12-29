@@ -101,20 +101,16 @@ interface BatchResult extends MethodResult {
 }
 class Savepoint {
   private id_ = 0;
-  private set = new Set<number>();
+  private set_ = new Set<number>();
   constructor(readonly db: DB) {}
   private _id(): number {
-    const set = this.set;
+    const set = this.set_;
     let val = this.id_;
     while (true) {
-      val++;
+      val = val == Number.MAX_SAFE_INTEGER ? 0 : val + 1;
       if (!set.has(val)) {
         set.add(val);
-        if (val == Number.MAX_SAFE_INTEGER) {
-          this.id_ = 0;
-        } else {
-          this.id_ = val;
-        }
+        this.id_ = val == Number.MAX_SAFE_INTEGER ? 0 : val;
         break;
       }
     }
@@ -126,186 +122,77 @@ class Savepoint {
     return id;
   }
   release(id: number) {
-    this.set.delete(id);
+    this.set_.delete(id);
     this.db.execute(`RELEASE auto_worker_save_${id}`);
   }
   rollback(id: number) {
-    this.set.delete(id);
+    this.set_.delete(id);
     this.db.execute(`ROLLBACK auto_worker_save_${id}`);
   }
+  clear() {
+    this.id_ = 0;
+    this.set_.clear();
+  }
 }
-class Database {
-  readonly db: DB;
-  readonly savepoint: Savepoint;
-  constructor(req: OpenRequest) {
-    const db = new DB(req.path, req.opts);
-    this.db = db;
-    this.savepoint = new Savepoint(db);
-  }
-  close(req: CloseRequest) {
+class Preparor {
+  private id_ = 0;
+  private keys_ = new Map<number, Prepared>();
+  constructor(readonly db: DB) {}
+  private _id() {
     const keys = this.keys_;
-    for (const [, p] of keys) {
-      p.finalize();
-    }
-    keys.clear();
-    this.db.close(req.force);
-  }
-  execute(req: ExecuteRequest) {
-    if (req.args) {
-      this.db.query(req.sql, req.args);
-    } else {
-      this.db.execute(req.sql);
+    let val = this.id_;
+    while (true) {
+      val = val == Number.MAX_SAFE_INTEGER ? 0 : val + 1;
+      if (!keys.has(val)) {
+        this.id_ = val == Number.MAX_SAFE_INTEGER ? 0 : val;
+        return val;
+      }
     }
   }
-  query(req: QueryRequest) {
-    if (req.entries) {
-      return this.db.queryEntries(
-        req.sql,
-        req.args,
-      );
-    }
-    return this.db.query(
-      req.sql,
-      req.args,
-    );
-  }
-  batch(req: BatchRequest) {
-    const result: Array<BatchResult> = [];
-    const ps = new Array<{
-      id: number;
-      prepared: Prepared;
-    }>();
-    const keys = this.keys_;
-    let savepoint: number | undefined;
-    try {
-      if (req.savepoint) {
-        savepoint = this.savepoint.save();
-      }
-      for (const batch of req.batch) {
-        if (typeof batch.sql === "number") {
-          if (batch.method !== undefined) {
-            const v = this._method(
-              batch.sql,
-              batch.method!,
-              batch.args,
-              batch.result,
-            );
-            if (batch.result) {
-              result.push({
-                prepare: v?.prepare,
-              });
-            }
-          } else if (batch.methods !== undefined) {
-            const prepared = keys.get(batch.sql);
-            if (!prepared) {
-              throw new SqliteError(`not found prepared(${batch.sql})`);
-            }
-            if (batch.result) {
-              const arrs: Array<any> = [];
-              for (const node of batch.methods) {
-                if (node.result) {
-                  arrs.push(this._preparedMethod(
-                    batch.sql,
-                    prepared,
-                    node.method,
-                    node.args,
-                    true,
-                  ));
-                } else {
-                  this._preparedMethod(
-                    batch.sql,
-                    prepared,
-                    node.method,
-                    node.args,
-                  );
-                }
-              }
-              result.push({
-                prepares: arrs,
-              });
-            } else {
-              for (const node of batch.methods) {
-                this._preparedMethod(
-                  batch.sql,
-                  prepared,
-                  node.method,
-                  node.args,
-                );
-              }
-            }
-          } else {
-            throw new SqliteError("unknow method prepared.undefined");
-          }
-        } else if (batch.prepare) {
-          const id = this._id();
-          const prepared = this.db.prepareQuery(batch.sql);
-          keys.set(id, prepared);
-          ps.push({
-            id: id,
-            prepared: prepared,
-          });
-          if (batch.result) {
-            result.push({
-              prepared: id,
-            });
-          }
-        } else {
-          if (batch.result) {
-            result.push({
-              sql: batch.entries
-                ? this.db.queryEntries(batch.sql, batch.args)
-                : this.db.query(batch.sql, batch.args),
-            });
-          } else {
-            if (batch.args) {
-              this.db.query(batch.sql, batch.args);
-            } else {
-              this.db.execute(batch.sql);
-            }
-          }
-        }
-      }
-
-      if (savepoint !== undefined) {
-        this.savepoint.release(savepoint);
-      }
-    } catch (e) {
-      for (const p of ps) {
-        try {
-          p.prepared.finalize();
-          keys.delete(p.id);
-        } catch (_) { //
-        }
-      }
-      if (savepoint !== undefined) {
-        try {
-          this.savepoint.rollback(savepoint);
-        } catch (_) { //
-        }
-      }
-      throw e;
-    }
-    return result;
-  }
-  prepare(req: PrepareRequest) {
+  create(sql: string) {
     const id = this._id();
-    this.keys_.set(id, this.db.prepareQuery(req.sql));
+    this.keys_.set(id, this.db.prepareQuery(sql));
     return id;
   }
-  private _method(
+  create2(sql: string): [number, Prepared] {
+    const id = this._id();
+    const val = this.db.prepareQuery(sql);
+    this.keys_.set(id, val);
+    return [id, val];
+  }
+  delete(id: number) {
+    this.keys_.delete(id);
+  }
+  private last_: undefined | {
+    id: number;
+    p: Prepared;
+  };
+  get(id: number) {
+    if (this.last_?.id === id) {
+      return this.last_.p!;
+    }
+    const found = this.keys_.get(id);
+    if (found) {
+      this.last_ = {
+        id: id,
+        p: found,
+      };
+    }
+    return found;
+  }
+  _method(
     id: number,
     method: string,
     args?: QueryParameterSet,
     result?: boolean,
   ): MethodResult | undefined {
-    const keys = this.keys_;
-    const prepared = keys.get(id);
+    const prepared = this.get(id);
     if (!prepared) {
       throw new SqliteError(`not found prepared(${id})`);
     }
     return this._preparedMethod(id, prepared, method, args, result);
   }
-  private _preparedMethod(
+  _preparedMethod(
     id: number,
     prepared: Prepared,
     method: string,
@@ -319,6 +206,7 @@ class Database {
           prepared.finalize();
         } catch (_) { //
         }
+        this.last_ = undefined;
         this.keys_.delete(id);
         break;
       case "columns":
@@ -354,23 +242,172 @@ class Database {
   method(req: MethodRequest) {
     return this._method(req.sql, req.method, req.args, req.result)?.prepare;
   }
-  private _id() {
+  clear() {
     const keys = this.keys_;
-    let val = this.id_;
-    while (true) {
-      val++;
-      if (!keys.has(val)) {
-        if (val == Number.MAX_SAFE_INTEGER) {
-          this.id_ = 0;
-        } else {
-          this.id_ = val;
-        }
-        return val;
-      }
+    for (const [, p] of keys) {
+      p.finalize();
+    }
+    keys.clear();
+    this.id_ = 0;
+  }
+}
+class Database {
+  readonly db: DB;
+  readonly savepoint: Savepoint;
+  readonly preparor: Preparor;
+  constructor(req: OpenRequest) {
+    const db = new DB(req.path, req.opts);
+    this.db = db;
+    this.savepoint = new Savepoint(db);
+    this.preparor = new Preparor(db);
+  }
+  close(req: CloseRequest) {
+    this.savepoint.clear();
+    this.preparor.clear();
+    this.db.close(req.force);
+  }
+  execute(req: ExecuteRequest) {
+    if (req.args) {
+      this.db.query(req.sql, req.args);
+    } else {
+      this.db.execute(req.sql);
     }
   }
-  private id_ = 0;
-  private keys_ = new Map<number, Prepared>();
+  query(req: QueryRequest) {
+    if (req.entries) {
+      return this.db.queryEntries(
+        req.sql,
+        req.args,
+      );
+    }
+    return this.db.query(
+      req.sql,
+      req.args,
+    );
+  }
+  batch(req: BatchRequest) {
+    const result: Array<BatchResult> = [];
+    const ps = new Array<{
+      id: number;
+      prepared: Prepared;
+    }>();
+    const preparor = this.preparor;
+    let savepoint: number | undefined;
+    try {
+      if (req.savepoint) {
+        savepoint = this.savepoint.save();
+      }
+      for (const batch of req.batch) {
+        if (typeof batch.sql === "number") {
+          if (batch.method !== undefined) {
+            const v = preparor._method(
+              batch.sql,
+              batch.method!,
+              batch.args,
+              batch.result,
+            );
+            if (batch.result) {
+              result.push({
+                prepare: v?.prepare,
+              });
+            }
+          } else if (batch.methods !== undefined) {
+            const prepared = preparor.get(batch.sql);
+            if (!prepared) {
+              throw new SqliteError(`not found prepared(${batch.sql})`);
+            }
+            if (batch.result) {
+              const arrs: Array<any> = [];
+              for (const node of batch.methods) {
+                if (node.result) {
+                  arrs.push(preparor._preparedMethod(
+                    batch.sql,
+                    prepared,
+                    node.method,
+                    node.args,
+                    true,
+                  ));
+                } else {
+                  preparor._preparedMethod(
+                    batch.sql,
+                    prepared,
+                    node.method,
+                    node.args,
+                  );
+                }
+              }
+              result.push({
+                prepares: arrs,
+              });
+            } else {
+              for (const node of batch.methods) {
+                preparor._preparedMethod(
+                  batch.sql,
+                  prepared,
+                  node.method,
+                  node.args,
+                );
+              }
+            }
+          } else {
+            throw new SqliteError("unknow method prepared.undefined");
+          }
+        } else if (batch.prepare) {
+          const [id, prepared] = preparor.create2(batch.sql);
+          ps.push({
+            id: id,
+            prepared: prepared,
+          });
+          if (batch.result) {
+            result.push({
+              prepared: id,
+            });
+          }
+        } else {
+          if (batch.result) {
+            result.push({
+              sql: batch.entries
+                ? this.db.queryEntries(batch.sql, batch.args)
+                : this.db.query(batch.sql, batch.args),
+            });
+          } else {
+            if (batch.args) {
+              this.db.query(batch.sql, batch.args);
+            } else {
+              this.db.execute(batch.sql);
+            }
+          }
+        }
+      }
+
+      if (savepoint !== undefined) {
+        this.savepoint.release(savepoint);
+      }
+    } catch (e) {
+      for (const p of ps) {
+        try {
+          p.prepared.finalize();
+        } catch (_) { //
+        } finally {
+          preparor.delete(p.id);
+        }
+      }
+      if (savepoint !== undefined) {
+        try {
+          this.savepoint.rollback(savepoint);
+        } catch (_) { //
+        }
+      }
+      throw e;
+    }
+    return result;
+  }
+  prepare(req: PrepareRequest) {
+    return this.preparor.create(req.sql);
+  }
+  method(req: MethodRequest) {
+    return this.preparor.method(req);
+  }
 }
 let db: Database | undefined;
 function doTask(data: RequestMessage) {

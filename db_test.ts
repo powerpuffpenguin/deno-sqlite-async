@@ -14,7 +14,7 @@ Deno.test("Batch", async () => {
   try {
     const batch = db.batch();
     batch.execute(createSQL);
-    batch.delete(table);
+    batch.delete(table, { name: "v0" });
     batch.rawInsert(
       `INSERT INTO ${table} (${columnID}, ${columnName}) VALUES (?,?)`,
       {
@@ -30,12 +30,17 @@ Deno.test("Batch", async () => {
         name: `v${i}`,
       });
     }
-    const result = await batch.commit();
+
+    const result = await batch.commit({
+      savepoint: true,
+    });
     const values = batch.values()!;
-    for (let i = 1; i < 10; i++) {
+    for (let i = 0; i < 10; i++) {
       assertEquals(result[i].sql, i as any);
       assertEquals(values.get(`v${i}`), i);
     }
+    console.log(result);
+    console.log(values);
   } finally {
     db.close();
   }

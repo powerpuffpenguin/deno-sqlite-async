@@ -17,23 +17,20 @@ import {
 
 import { InvokeOptions, Method, What } from "./caller.ts";
 import {
+  BatchArgs,
   BatchCommit,
   BatchDeleteArgs,
   BatchExecuteArgs,
-  BatchExecuteOptions,
   BatchExecutor,
   BatchInsertArgs,
-  BatchInsertOptions,
-  BatchMethodArgs,
-  BatchPrepareDeleteOptions,
-  BatchPrepareInsertOptions,
-  BatchPrepareOptions,
-  BatchPrepareQueryOptions,
-  BatchPrepareUpdateOptions,
-  BatchQueryOptions,
+  BatchNameArgs,
+  BatchPrepareDeleteArgs,
+  BatchPrepareInsertArgs,
+  BatchPrepareQueryArgs,
+  BatchPrepareUpdateArgs,
+  BatchQueryArgs,
   BatchResult,
-  BatchResultArgs,
-  BatchUpdateOptions,
+  BatchUpdateArgs,
   BatchValue,
   DeleteOptions,
   ExecuteOptions,
@@ -757,16 +754,21 @@ export class Batch implements BatchExecutor {
     }
   }
   execute(sql: string, opts?: BatchExecuteArgs): void {
+    if (opts?.result) {
+      this._name(opts?.name);
+      this.i_++;
+    }
     this.batch_.push(
       {
         sql: sql,
         args: opts?.args,
+        result: opts?.result,
       },
     );
 
     this.lock_ = Locker.shared;
   }
-  rawInsert(sql: string, opts?: BatchResultArgs): void {
+  rawInsert(sql: string, opts?: BatchArgs): void {
     this._name(opts?.name);
     this.hook_.add(this.i_++);
 
@@ -796,7 +798,7 @@ export class Batch implements BatchExecutor {
       name: opts?.name,
     });
   }
-  private _change(sql: string, opts?: BatchExecuteOptions): void {
+  private _change(sql: string, opts?: BatchArgs): void {
     this._name(opts?.name);
     this.hook_.add(this.i_++);
 
@@ -813,22 +815,7 @@ export class Batch implements BatchExecutor {
     );
     this.lock_ = Locker.shared;
   }
-  rawUpdate(sql: string, opts?: BatchExecuteOptions): void {
-    this._change(sql, opts);
-  }
-  update(
-    table: string,
-    values: Record<string, any>,
-    opts?: BatchUpdateOptions,
-  ): void {
-    const builder = new Builder();
-    builder.update(table, values, opts);
-    this._change(builder.sql(), {
-      args: builder.args(),
-    });
-  }
-
-  rawDelete(sql: string, opts?: BatchExecuteOptions): void {
+  rawDelete(sql: string, opts?: BatchArgs): void {
     this._change(sql, opts);
   }
 
@@ -836,11 +823,28 @@ export class Batch implements BatchExecutor {
     const builder = new Builder();
     builder.delete(table, opts);
     this._change(builder.sql(), {
+      name: opts?.name,
       args: builder.args(),
     });
   }
 
-  rawQuery(sql: string, opts?: BatchExecuteOptions): void {
+  rawUpdate(sql: string, opts?: BatchArgs): void {
+    this._change(sql, opts);
+  }
+  update(
+    table: string,
+    values: Record<string, any>,
+    opts?: BatchUpdateArgs,
+  ): void {
+    const builder = new Builder();
+    builder.update(table, values, opts);
+    this._change(builder.sql(), {
+      name: opts?.name,
+      args: builder.args(),
+    });
+  }
+
+  rawQuery(sql: string, opts?: BatchArgs): void {
     this._name(opts?.name);
     this.i_++;
     this.batch_.push(
@@ -853,7 +857,7 @@ export class Batch implements BatchExecutor {
     this.lock_ = Locker.shared;
   }
 
-  query(table: string, opts?: BatchQueryOptions): void {
+  query(table: string, opts?: BatchQueryArgs): void {
     const builder = new Builder();
     builder.query(table, opts);
 
@@ -869,7 +873,7 @@ export class Batch implements BatchExecutor {
     this.lock_ = Locker.shared;
   }
 
-  prepare(sql: string, opts?: BatchPrepareOptions): void {
+  prepare(sql: string, opts?: BatchNameArgs): void {
     this._name(opts?.name);
     this.prepare_.add(this.i_++);
     this.batch_.push({
@@ -880,38 +884,39 @@ export class Batch implements BatchExecutor {
   prepareInsert(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
-    opts?: BatchPrepareInsertOptions,
+    opts?: BatchPrepareInsertArgs,
   ): void {
     const builder = new PrepareBuilder();
     builder.insert(table, columns, opts?.conflict);
     this.prepare(builder.sql(), opts);
   }
-  prepareQuery(table: string, opts?: BatchPrepareQueryOptions): void {
-    const builder = new PrepareBuilder();
-    builder.query(table, opts);
-    this.prepare(builder.sql(), opts);
-  }
-  prepareUpdate(
-    table: string,
-    columns: Array<string> | Array<ColumnVar>,
-    opts?: BatchPrepareUpdateOptions,
-  ): void {
-    const builder = new PrepareBuilder();
-    builder.update(table, columns, opts);
-    this.prepare(builder.sql(), opts);
-  }
   prepareDelete(
     table: string,
-    opts?: BatchPrepareDeleteOptions,
+    opts?: BatchPrepareDeleteArgs,
   ): void {
     const builder = new PrepareBuilder();
     builder.delete(table, opts);
     this.prepare(builder.sql(), opts);
   }
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareUpdateArgs,
+  ): void {
+    const builder = new PrepareBuilder();
+    builder.update(table, columns, opts);
+    this.prepare(builder.sql(), opts);
+  }
+  prepareQuery(table: string, opts?: BatchPrepareQueryArgs): void {
+    const builder = new PrepareBuilder();
+    builder.query(table, opts);
+    this.prepare(builder.sql(), opts);
+  }
+
   method(
     preparor: Preparor,
     method: Method,
-    opts?: BatchMethodArgs,
+    opts?: BatchArgs,
   ) {
     if (preparor.isClosed) {
       throw new SqliteError(`Preparor(${preparor.id}) already closed`);

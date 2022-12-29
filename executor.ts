@@ -1,7 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { ColumnVar } from "./builder.ts";
 import { Method } from "./caller.ts";
-import { Context } from "./deps/easyts/context/mod.ts";
 import { ContextOptions } from "./options.ts";
 import { ColumnName, QueryParameterSet, Row, RowObject } from "./sqlite.ts";
 /**
@@ -62,6 +61,30 @@ export interface ConflictArgs {
    */
   conflict?: Conflict;
 }
+export interface WhereArgs {
+  /**
+   * sql where section
+   */
+  where?: string;
+}
+export interface Args {
+  /**
+   * Parameters bound to sql
+   */
+  args?: QueryParameterSet;
+}
+export interface QueryArgs extends Args, WhereArgs {
+  distinct?: boolean;
+  /**
+   * SELECT columns or SELECT *
+   */
+  columns?: Array<string>;
+  groupBy?: string;
+  having?: string;
+  orderBy?: string;
+  limit?: number;
+  offset?: number | bigint;
+}
 /**
  * The sqlite provided by WebAssembly cannot correctly acquire the file lock, but you can use the lock inside the process, which can ensure that the current process uses sqlite correctly
  */
@@ -93,12 +116,7 @@ export interface InsertOptions extends Options {
 export interface PrepareInsertOptions extends ContextOptions {
   conflict?: Conflict;
 }
-export interface BatchPrepareOptions {
-  name?: string;
-}
-export interface BatchPrepareInsertOptions extends BatchPrepareOptions {
-  conflict?: Conflict;
-}
+
 export interface QueryOptions extends ExecuteOptions {
   distinct?: boolean;
   columns?: Array<string>;
@@ -119,16 +137,7 @@ export interface PrepareQueryOptions extends ContextOptions {
   limit?: number;
   offset?: number | bigint;
 }
-export interface BatchPrepareQueryOptions extends BatchPrepareOptions {
-  distinct?: boolean;
-  columns?: Array<string>;
-  where?: string;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
-}
+
 export interface UpdateOptions extends ExecuteOptions {
   where?: string;
   conflict?: Conflict;
@@ -137,19 +146,14 @@ export interface PrepareUpdateOptions extends ContextOptions {
   where?: string;
   conflict?: Conflict;
 }
-export interface BatchPrepareUpdateOptions extends BatchPrepareOptions {
-  where?: string;
-  conflict?: Conflict;
-}
+
 export interface DeleteOptions extends ExecuteOptions {
   where?: string;
 }
 export interface PrepareDeleteOptions extends ContextOptions {
   where?: string;
 }
-export interface BatchPrepareDeleteOptions extends BatchPrepareOptions {
-  where?: string;
-}
+
 export interface Executor {
   /**
    * Execute an SQL query with no return value.
@@ -313,29 +317,6 @@ export interface Executor {
   batch(): BatchExecutor;
 }
 
-export interface BatchExecuteOptions {
-  args?: QueryParameterSet;
-  name?: string;
-}
-
-export interface BatchInsertOptions {
-  conflict?: Conflict;
-}
-export interface BatchQueryOptions extends BatchExecuteOptions {
-  distinct?: boolean;
-  columns?: Array<string>;
-  where?: string;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
-}
-export interface BatchUpdateOptions extends BatchExecuteOptions {
-  where?: string;
-  conflict?: Conflict;
-}
-
 export interface Preparor {
   /**
    * close and release resources
@@ -404,28 +385,36 @@ export interface BatchCommit extends Options {
   savepoint?: boolean;
 }
 
-export interface BatchArgs {
+export interface BatchNameArgs {
   /**
    * If set then values.set(name,val)
    */
   name?: string;
 }
-export interface BatchExecuteArgs {
+export interface BatchArgs extends BatchNameArgs, Args {}
+export interface BatchExecuteArgs extends BatchArgs {
   /**
-   * Parameters bound to sql
+   * If set true need return result
    */
-  args?: QueryParameterSet;
+  result?: boolean;
 }
-export interface BatchResultArgs extends BatchArgs, BatchExecuteArgs {}
-export interface BatchInsertArgs extends BatchArgs, ConflictArgs {}
-export interface BatchMethodArgs extends BatchArgs {
-  /**
-   * Parameters bound to sql
-   */
-  args?: QueryParameterSet;
-}
-export interface BatchDeleteArgs extends BatchArgs, BatchExecuteArgs {
-  where?: string;
+
+export interface BatchInsertArgs extends BatchNameArgs, ConflictArgs {}
+export interface BatchDeleteArgs extends BatchArgs, WhereArgs {}
+export interface BatchUpdateArgs extends BatchArgs, ConflictArgs, WhereArgs {}
+export interface BatchQueryArgs extends BatchNameArgs, QueryArgs {}
+export interface BatchPrepareInsertArgs extends BatchNameArgs, ConflictArgs {}
+export interface BatchPrepareDeleteArgs extends BatchNameArgs, WhereArgs {}
+export interface BatchPrepareUpdateArgs
+  extends BatchNameArgs, WhereArgs, ConflictArgs {}
+export interface BatchPrepareQueryArgs extends BatchNameArgs, WhereArgs {
+  distinct?: boolean;
+  columns?: Array<string>;
+  groupBy?: string;
+  having?: string;
+  orderBy?: string;
+  limit?: number;
+  offset?: number | bigint;
 }
 /**
  * Execute a set of sql commands in batches, which is faster than executing each command individually
@@ -452,7 +441,7 @@ export interface BatchExecutor {
    *
    * @see {@link Executor.rawInsert}
    */
-  rawInsert(sql: string, opts?: BatchResultArgs): void;
+  rawInsert(sql: string, opts?: BatchArgs): void;
 
   /**
    * Add an INSERT command to the batch
@@ -466,28 +455,11 @@ export interface BatchExecutor {
   ): void;
 
   /**
-   * Add a UPDATE command to the batch
-   * @see {@link Executor.rawUpdate}
-   */
-  rawUpdate(sql: string, opts?: BatchExecuteOptions): void;
-
-  /**
-   * Add a UPDATE command to the batch
-   *
-   * @see {@link Executor.update}
-   */
-  update(
-    table: string,
-    values: Record<string, any>,
-    opts?: BatchUpdateOptions,
-  ): void;
-
-  /**
    * Add a DELETE command to the batch
    *
    * @see {@link Executor.rawDelete}
    */
-  rawDelete(sql: string, opts?: BatchExecuteOptions): void;
+  rawDelete(sql: string, opts?: BatchArgs): void;
 
   /**
    * Add a DELETE command to the batch
@@ -497,17 +469,34 @@ export interface BatchExecutor {
   delete(table: string, opts?: BatchDeleteArgs): void;
 
   /**
+   * Add a UPDATE command to the batch
+   * @see {@link Executor.rawUpdate}
+   */
+  rawUpdate(sql: string, opts?: BatchArgs): void;
+
+  /**
+   * Add a UPDATE command to the batch
+   *
+   * @see {@link Executor.update}
+   */
+  update(
+    table: string,
+    values: Record<string, any>,
+    opts?: BatchUpdateArgs,
+  ): void;
+
+  /**
    * Add a SELECT command to the batch
    *
    * @see {@link Executor.query}
    */
-  query(table: string, opts?: BatchQueryOptions): void;
+  query(table: string, opts?: BatchArgs): void;
   /**
    * Add a SELECT command to the batch
    *
    * @see {@link Executor.rawQuery}
    */
-  rawQuery(sql: string, opts?: BatchExecuteOptions): void;
+  rawQuery(sql: string, opts?: BatchQueryArgs): void;
 
   /**
    * Prepares the given SQL query, so that it
@@ -516,35 +505,36 @@ export interface BatchExecutor {
    *
    * @see {@link Executor.prepare}
    */
-  prepare(sql: string): void;
+  prepare(sql: string, opts?: BatchNameArgs): void;
   /**
    * @see {@link Executor.prepareInsert}
    */
   prepareInsert(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
-    opts?: BatchPrepareInsertOptions,
-  ): void;
-  /**
-   * @see {@link Executor.prepareQuery}
-   */
-  prepareQuery(table: string, opts?: BatchPrepareQueryOptions): void;
-  /**
-   * @see {@link Executor.prepareUpdate}
-   */
-  prepareUpdate(
-    table: string,
-    columns: Array<string> | Array<ColumnVar>,
-    opts?: BatchPrepareUpdateOptions,
+    opts?: BatchPrepareInsertArgs,
   ): void;
   /**
    * @see {@link Executor.prepareDelete}
    */
   prepareDelete(
     table: string,
-    opts?: BatchPrepareDeleteOptions,
+    opts?: BatchPrepareDeleteArgs,
   ): void;
 
+  /**
+   * @see {@link Executor.prepareUpdate}
+   */
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareUpdateArgs,
+  ): void;
+
+  /**
+   * @see {@link Executor.prepareQuery}
+   */
+  prepareQuery(table: string, opts?: BatchPrepareQueryArgs): void;
   /**
    * Add calls to the Prepare method to the batch
    * @see {@link Preparor}
@@ -552,6 +542,6 @@ export interface BatchExecutor {
   method(
     preparor: Preparor,
     method: Method,
-    opts?: BatchMethodArgs,
+    opts?: BatchArgs,
   ): void;
 }
