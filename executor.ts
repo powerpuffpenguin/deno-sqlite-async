@@ -1,7 +1,9 @@
 // deno-lint-ignore-file no-explicit-any
+import { ColumnVar } from "./builder.ts";
+import { Method } from "./caller.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
-import { ArgsOptions, ContextOptions } from "./options.ts";
-import { QueryParameterSet, Row, RowObject } from "./sqlite.ts";
+import { ContextOptions } from "./options.ts";
+import { ColumnName, QueryParameterSet, Row, RowObject } from "./sqlite.ts";
 /**
  * Insert/Update conflict resolver
  */
@@ -54,7 +56,12 @@ export enum Conflict {
    */
   replace,
 }
-
+export interface ConflictArgs {
+  /**
+   * conflict resolution algorithm
+   */
+  conflict?: Conflict;
+}
 /**
  * The sqlite provided by WebAssembly cannot correctly acquire the file lock, but you can use the lock inside the process, which can ensure that the current process uses sqlite correctly
  */
@@ -86,6 +93,12 @@ export interface InsertOptions extends Options {
 export interface PrepareInsertOptions extends ContextOptions {
   conflict?: Conflict;
 }
+export interface BatchPrepareOptions {
+  name?: string;
+}
+export interface BatchPrepareInsertOptions extends BatchPrepareOptions {
+  conflict?: Conflict;
+}
 export interface QueryOptions extends ExecuteOptions {
   distinct?: boolean;
   columns?: Array<string>;
@@ -106,6 +119,16 @@ export interface PrepareQueryOptions extends ContextOptions {
   limit?: number;
   offset?: number | bigint;
 }
+export interface BatchPrepareQueryOptions extends BatchPrepareOptions {
+  distinct?: boolean;
+  columns?: Array<string>;
+  where?: string;
+  groupBy?: string;
+  having?: string;
+  orderBy?: string;
+  limit?: number;
+  offset?: number | bigint;
+}
 export interface UpdateOptions extends ExecuteOptions {
   where?: string;
   conflict?: Conflict;
@@ -114,7 +137,17 @@ export interface PrepareUpdateOptions extends ContextOptions {
   where?: string;
   conflict?: Conflict;
 }
+export interface BatchPrepareUpdateOptions extends BatchPrepareOptions {
+  where?: string;
+  conflict?: Conflict;
+}
 export interface DeleteOptions extends ExecuteOptions {
+  where?: string;
+}
+export interface PrepareDeleteOptions extends ContextOptions {
+  where?: string;
+}
+export interface BatchPrepareDeleteOptions extends BatchPrepareOptions {
   where?: string;
 }
 export interface Executor {
@@ -249,6 +282,25 @@ export interface Executor {
    */
   delete(table: string, opts?: DeleteOptions): Promise<number | bigint>;
 
+  prepare(sql: string, opts?: ContextOptions): Promise<Preparor>;
+  prepareChanges(): Preparor;
+  prepareLastInsertRowid(): Preparor;
+  prepareInsert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: PrepareInsertOptions,
+  ): Promise<Preparor>;
+  prepareQuery(table: string, opts?: PrepareQueryOptions): Promise<Preparor>;
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: PrepareUpdateOptions,
+  ): Promise<Preparor>;
+  prepareDelete(
+    table: string,
+    opts?: PrepareDeleteOptions,
+  ): Promise<Preparor>;
+
   /**
    * Creates a batch, used for performing multiple operation
    * in a single atomic operation.
@@ -258,11 +310,12 @@ export interface Executor {
    * If the batch was created in a transaction, it will be commited
    * when the transaction is done
    */
-  batch(): Batch;
+  batch(): BatchExecutor;
 }
 
 export interface BatchExecuteOptions {
   args?: QueryParameterSet;
+  name?: string;
 }
 
 export interface BatchInsertOptions {
@@ -275,38 +328,152 @@ export interface BatchQueryOptions extends BatchExecuteOptions {
   groupBy?: string;
   having?: string;
   orderBy?: string;
-  limit?: number | bigint;
+  limit?: number;
   offset?: number | bigint;
 }
 export interface BatchUpdateOptions extends BatchExecuteOptions {
   where?: string;
   conflict?: Conflict;
 }
-export interface BatchDeleteOptions extends BatchExecuteOptions {
+
+export interface Preparor {
+  /**
+   * close and release resources
+   */
+  close(): boolean;
+  /**
+   * return resource id
+   */
+  get id(): number;
+  /**
+   * Whether the resource has been closed
+   */
+  get isClosed(): boolean;
+  columns(opts?: Options): Promise<Array<ColumnName>>;
+  first(opts?: ExecuteOptions): Promise<Row | undefined>;
+  firstEntry(
+    opts?: ExecuteOptions,
+  ): Promise<RowObject | undefined>;
+  all(
+    opts?: ExecuteOptions,
+  ): Promise<Array<Row>>;
+  allEntries(
+    opts?: ExecuteOptions,
+  ): Promise<Array<RowObject>>;
+  execute(
+    opts?: ExecuteOptions,
+  ): Promise<undefined>;
+  expandSql(
+    opts?: ExecuteOptions,
+  ): Promise<string>;
+}
+
+/**
+ * Different types of commands in Batch will return results in different fields
+ */
+export interface BatchResult {
+  /**
+   * If there is no special instruction, the results will be returned to the sql field
+   */
+  sql?: Array<Row | number | bigint | RowObject>;
+  /**
+   * If the command is to create a Preparer, the created Preparer is set here
+   */
+  prepared?: Preparor;
+  /**
+   * The result returned by executing the Prepare method is here
+   */
+  prepare?: Array<ColumnName | Row | RowObject> | Row | RowObject | string;
+}
+export type BatchValue =
+  | Array<ColumnName | Row | RowObject>
+  | Row
+  | RowObject
+  | string
+  | undefined
+  | Preparor
+  | number
+  | bigint;
+
+export interface BatchCommit extends Options {
+  /**
+   * If true execute the command in SAVEPOINT
+   *
+   * {@link https://www.sqlite.org/lang_savepoint.html}
+   */
+  savepoint?: boolean;
+}
+
+export interface BatchArgs {
+  /**
+   * If set then values.set(name,val)
+   */
+  name?: string;
+}
+export interface BatchExecuteArgs {
+  /**
+   * Parameters bound to sql
+   */
+  args?: QueryParameterSet;
+}
+export interface BatchResultArgs extends BatchArgs, BatchExecuteArgs {}
+export interface BatchInsertArgs extends BatchArgs, ConflictArgs {}
+export interface BatchMethodArgs extends BatchArgs {
+  /**
+   * Parameters bound to sql
+   */
+  args?: QueryParameterSet;
+}
+export interface BatchDeleteArgs extends BatchArgs, BatchExecuteArgs {
   where?: string;
 }
-export interface BatchCommit {
-  ctx: Context;
-}
-export interface Batch {
-  commit(opts?: BatchCommit): Array<Array<Row | RowObject>>;
+/**
+ * Execute a set of sql commands in batches, which is faster than executing each command individually
+ */
+export interface BatchExecutor {
+  /**
+   * Submit the command to sqlite for execution
+   */
+  commit(opts?: BatchCommit): Promise<Array<BatchResult>>;
+  /**
+   * If a name is set for the command return value, the command return value can be obtained from values after commit
+   */
+  values(): Map<string, BatchValue> | undefined;
 
   /**
+   * Add a SQL command to the batch
+   *
+   * @see {@link Executor.execute}
+   */
+  execute(sql: string, opts?: BatchExecuteArgs): void;
+
+  /**
+   * Add an INSERT command to the batch
+   *
    * @see {@link Executor.rawInsert}
    */
-  rawInsert(sql: string, opts?: BatchExecuteOptions): void;
+  rawInsert(sql: string, opts?: BatchResultArgs): void;
 
   /**
+   * Add an INSERT command to the batch
+   *
    * @see {@link Executor.insert}
    */
-  insert(table: string, opts?: BatchInsertOptions): void;
+  insert(
+    table: string,
+    values: Record<string, any>,
+    opts?: BatchInsertArgs,
+  ): void;
 
   /**
+   * Add a UPDATE command to the batch
    * @see {@link Executor.rawUpdate}
    */
   rawUpdate(sql: string, opts?: BatchExecuteOptions): void;
 
   /**
+   * Add a UPDATE command to the batch
+   *
    * @see {@link Executor.update}
    */
   update(
@@ -316,26 +483,75 @@ export interface Batch {
   ): void;
 
   /**
+   * Add a DELETE command to the batch
+   *
    * @see {@link Executor.rawDelete}
    */
   rawDelete(sql: string, opts?: BatchExecuteOptions): void;
 
   /**
+   * Add a DELETE command to the batch
+   *
    * @see {@link Executor.delete}
    */
-  delete(table: string, opts: BatchDeleteOptions): void;
+  delete(table: string, opts?: BatchDeleteArgs): void;
 
   /**
-   * @see {@link Executor.execute}
-   */
-  execute(sql: string, opts: BatchDeleteOptions): void;
-
-  /**
+   * Add a SELECT command to the batch
+   *
    * @see {@link Executor.query}
    */
   query(table: string, opts?: BatchQueryOptions): void;
   /**
+   * Add a SELECT command to the batch
+   *
    * @see {@link Executor.rawQuery}
    */
   rawQuery(sql: string, opts?: BatchExecuteOptions): void;
+
+  /**
+   * Prepares the given SQL query, so that it
+   * can be run multiple times and potentially
+   * with different parameters.
+   *
+   * @see {@link Executor.prepare}
+   */
+  prepare(sql: string): void;
+  /**
+   * @see {@link Executor.prepareInsert}
+   */
+  prepareInsert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareInsertOptions,
+  ): void;
+  /**
+   * @see {@link Executor.prepareQuery}
+   */
+  prepareQuery(table: string, opts?: BatchPrepareQueryOptions): void;
+  /**
+   * @see {@link Executor.prepareUpdate}
+   */
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareUpdateOptions,
+  ): void;
+  /**
+   * @see {@link Executor.prepareDelete}
+   */
+  prepareDelete(
+    table: string,
+    opts?: BatchPrepareDeleteOptions,
+  ): void;
+
+  /**
+   * Add calls to the Prepare method to the batch
+   * @see {@link Preparor}
+   */
+  method(
+    preparor: Preparor,
+    method: Method,
+    opts?: BatchMethodArgs,
+  ): void;
 }

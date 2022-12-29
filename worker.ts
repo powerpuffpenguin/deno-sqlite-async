@@ -95,10 +95,7 @@ interface MethodResult {
   prepare?: any;
 }
 interface BatchResult extends MethodResult {
-  prepared?: {
-    id: number;
-    sql: string;
-  };
+  prepared?: number;
   sql?: Array<Row | RowObject>;
   prepares?: Array<any>;
 }
@@ -249,7 +246,7 @@ class Database {
           });
           if (batch.result) {
             result.push({
-              prepared: { id: id, sql: batch.sql },
+              prepared: id,
             });
           }
         } else {

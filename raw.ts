@@ -137,14 +137,17 @@ export class RawDB {
       savepoint: opts.savepoint,
       batch: batch,
     }) as any;
-    for (const item of arrs) {
-      if (item.prepared !== undefined) {
-        const prepared = (item as any).prepared;
-        item.prepared = new RawPrepared(
-          this.caller_,
-          prepared.id,
-          prepared.sql,
-        );
+    let i = 0;
+    for (const b of batch) {
+      if (b.result) {
+        if (b.prepare) {
+          arrs[i].prepared = new RawPrepared(
+            this.caller_,
+            (arrs[i] as any).prepared,
+            b.sql as string,
+          );
+        }
+        i++;
       }
     }
     return arrs;

@@ -5,8 +5,8 @@
     "tasks": {
       "deps": "deno run -A deps.ts",
       "run": "deno run --lock-write -A bin/main.ts",
-      "test": "deno test --fail-fast",
-      "test2": "deno test --lock-write --fail-fast",
+      "test": "deno test -A --fail-fast",
+      "test2": "deno test -A --lock-write --fail-fast",
       "bench": "deno bench --lock-write bin/main.ts",
       "cache": "deno cache --lock-write bin/main.ts",
       "reload": "deno cache --reload --lock-write bin/main.ts"

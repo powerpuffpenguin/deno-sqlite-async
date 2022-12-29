@@ -3,6 +3,7 @@ import { QueryParameter, QueryParameterSet, SqliteError } from "./sqlite.ts";
 import {
   Conflict,
   DeleteOptions,
+  PrepareDeleteOptions,
   PrepareQueryOptions,
   PrepareUpdateOptions,
   QueryOptions,
@@ -491,5 +492,12 @@ export class PrepareBuilder {
     }
 
     this.sql_ = sql.join("");
+  }
+  delete(table: string, opts?: PrepareDeleteOptions) {
+    const where = opts?.where ?? "";
+
+    this.sql_ = where == ""
+      ? `DELETE FROM ${escapeName(table)}`
+      : `DELETE FROM ${escapeName(table)} WHERE ${where}`;
   }
 }

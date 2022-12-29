@@ -6,18 +6,46 @@ import {
   RowObject,
   SqliteError,
 } from "./sqlite.ts";
-import { RawDB, RawOpenOptions, RawPrepared } from "./raw.ts";
+import {
+  RawBatch,
+  RawBatchOptions,
+  RawBatchResult,
+  RawDB,
+  RawOpenOptions,
+  RawPrepared,
+} from "./raw.ts";
 
 import { InvokeOptions, Method, What } from "./caller.ts";
 import {
+  BatchCommit,
+  BatchDeleteArgs,
+  BatchExecuteArgs,
+  BatchExecuteOptions,
+  BatchExecutor,
+  BatchInsertArgs,
+  BatchInsertOptions,
+  BatchMethodArgs,
+  BatchPrepareDeleteOptions,
+  BatchPrepareInsertOptions,
+  BatchPrepareOptions,
+  BatchPrepareQueryOptions,
+  BatchPrepareUpdateOptions,
+  BatchQueryOptions,
+  BatchResult,
+  BatchResultArgs,
+  BatchUpdateOptions,
+  BatchValue,
   DeleteOptions,
   ExecuteOptions,
+  Executor,
   InsertOptions,
   Locker,
   Options,
+  PrepareDeleteOptions,
   PrepareInsertOptions,
   PrepareQueryOptions,
   PrepareUpdateOptions,
+  Preparor,
   QueryOptions,
   UpdateOptions,
 } from "./executor.ts";
@@ -193,6 +221,17 @@ export class _Executor {
       locked?.unlock();
     }
   }
+  async batch(
+    lock: Locker,
+    opts: RawBatchOptions,
+  ): Promise<Array<RawBatchResult>> {
+    const locked = await this._locked(lock, opts.ctx);
+    try {
+      return await this.db.batch(opts);
+    } finally {
+      locked?.unlock();
+    }
+  }
 }
 export class SqlPrepare {
   constructor(protected readonly er_: _Executor) {}
@@ -230,8 +269,16 @@ export class SqlPrepare {
     builder.update(table, columns, opts);
     return this.er_.prepare(builder.sql(), opts);
   }
+  prepareDelete(
+    table: string,
+    opts?: PrepareDeleteOptions,
+  ) {
+    const builder = new PrepareBuilder();
+    builder.delete(table, opts);
+    return this.er_.prepare(builder.sql(), opts);
+  }
 }
-export class DB extends SqlPrepare {
+export class DB extends SqlPrepare implements Executor {
   static async open(
     path = ":memory:",
     opts?: OpenOptions,
@@ -405,7 +452,7 @@ export class DB extends SqlPrepare {
    *   args: ['updated name', '9876', 'some name']});
    * ```
    */
-  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | BigInt> {
+  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | bigint> {
     return this.er_.changes(
       opts?.lock ?? Locker.shared,
       sql,
@@ -431,7 +478,7 @@ export class DB extends SqlPrepare {
     table: string,
     values: Record<string, any>,
     opts?: UpdateOptions,
-  ): Promise<number | BigInt> {
+  ): Promise<number | bigint> {
     const builder = new Builder();
     builder.update(table, values, opts);
     return this.er_.changes(
@@ -487,9 +534,12 @@ export class DB extends SqlPrepare {
       },
     );
   }
+  batch() {
+    return new Batch(this.er_);
+  }
 }
 
-export class Prepared {
+export class Prepared implements Preparor {
   constructor(
     private readonly er_: _Executor,
     private readonly prepared_: RawPrepared,
@@ -508,12 +558,18 @@ export class Prepared {
     }
     return true;
   }
+  get id(): number {
+    return this.prepared_.id;
+  }
+  get isClosed(): boolean {
+    return this.closed_ || this.prepared_.isClosed;
+  }
   columns(opts?: Options): Promise<Array<ColumnName>> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.invoke(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
       req: {
         what: What.method,
@@ -523,116 +579,355 @@ export class Prepared {
       },
     });
   }
-  // first(opts?: RawOptions): Promise<Row | undefined> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.first,
-  //     args: opts?.args,
-  //     result: true,
-  //   });
-  // }
-  // firstEntry(
-  //   opts?: RawOptions,
-  // ): Promise<RowObject | undefined> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.firstEntry,
-  //     args: opts?.args,
-  //     result: true,
-  //   });
-  // }
-  // all(
-  //   opts?: RawOptions,
-  // ): Promise<Array<Row>> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.all,
-  //     args: opts?.args,
-  //     result: true,
-  //   });
-  // }
-  // allEntries(
-  //   opts?: RawOptions,
-  // ): Promise<Array<RowObject>> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.allEntries,
-  //     args: opts?.args,
-  //     result: true,
-  //   });
-  // }
-  // execute(
-  //   opts?: RawOptions,
-  // ): Promise<undefined> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.execute,
-  //     args: opts?.args,
-  //   });
-  // }
-  // expandSql(
-  //   opts?: RawOptions,
-  // ): Promise<string> {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   return this.caller_.invoke(opts?.ctx, {
-  //     what: What.method,
-  //     sql: id,
-  //     method: Method.expandSql,
-  //     args: opts?.args,
-  //     result: true,
-  //   });
-  // }
-  // async batch(methods: Array<BatchMethod>, opts?: PreparedOptions) {
-  //   const id = this.id_;
-  //   if (id == undefined) {
-  //     throw new SqliteError(`Prepared(${this.id}) already closed`);
-  //   }
-  //   let result: boolean | undefined;
-  //   for (const method of methods) {
-  //     if (method.result) {
-  //       result = true;
-  //       break;
-  //     }
-  //   }
-  //   const batch: Array<RawBatch> = [{
-  //     sql: id,
-  //     result: result,
-  //     methods: methods,
-  //   }];
-  //   return await this.caller_.invoke(
-  //     opts?.ctx,
-  //     {
-  //       what: What.batch,
-  //       batch: batch,
-  //     },
-  //   );
-  // }
+  first(opts?: ExecuteOptions): Promise<Row | undefined> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.first,
+        args: opts?.args,
+        result: true,
+      },
+    });
+  }
+  firstEntry(
+    opts?: ExecuteOptions,
+  ): Promise<RowObject | undefined> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.firstEntry,
+        args: opts?.args,
+        result: true,
+      },
+    });
+  }
+  all(
+    opts?: ExecuteOptions,
+  ): Promise<Array<Row>> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.all,
+        args: opts?.args,
+        result: true,
+      },
+    });
+  }
+  allEntries(
+    opts?: ExecuteOptions,
+  ): Promise<Array<RowObject>> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.allEntries,
+        args: opts?.args,
+        result: true,
+      },
+    });
+  }
+  execute(
+    opts?: ExecuteOptions,
+  ): Promise<undefined> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.execute,
+        args: opts?.args,
+      },
+    });
+  }
+  expandSql(
+    opts?: ExecuteOptions,
+  ): Promise<string> {
+    const prepare = this.prepared_;
+    if (prepare.isClosed) {
+      throw new SqliteError(`Prepared(${prepare.id}) already closed`);
+    }
+    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+      ctx: opts?.ctx,
+      req: {
+        what: What.method,
+        sql: prepare.id,
+        method: Method.expandSql,
+        args: opts?.args,
+        result: true,
+      },
+    });
+  }
+}
+
+export class Batch implements BatchExecutor {
+  private hook_ = new Set<number>();
+  private prepare_ = new Set<number>();
+  private i_ = 0;
+  private batch_ = new Array<RawBatch>();
+  private keys_?: Map<number, string>;
+  private values_?: Map<string, BatchValue>;
+  constructor(private er_: _Executor) {}
+  private lock_ = Locker.none;
+  values() {
+    return this.values_;
+  }
+  async commit(opts?: BatchCommit): Promise<Array<BatchResult>> {
+    const batch = this.batch_;
+    if (batch.length == 0) {
+      return [];
+    }
+    const rows = await this.er_.batch(
+      opts?.lock ?? this.lock_,
+      {
+        ctx: opts?.ctx,
+        savepoint: opts?.savepoint,
+        batch: batch,
+      },
+    );
+    for (const i of this.hook_) {
+      const row = rows[i].prepare as Array<any>;
+      rows[i].sql = row[0];
+      rows[i].prepare = undefined;
+    }
+    for (const i of this.prepare_) {
+      const prepared = rows[i].prepared!;
+      rows[i].prepared = new Prepared(this.er_, prepared) as any;
+    }
+    const keys = this.keys_;
+    if (keys && keys.size != 0) {
+      const values = new Map<string, any>();
+      const end = rows.length;
+      for (let i = 0; i < end; i++) {
+        const name = keys.get(i);
+        if (name === undefined) {
+          continue;
+        }
+        const row = rows[i];
+        if (row.sql !== undefined) {
+          values.set(name, row.sql);
+        } else if (row.prepare !== undefined) {
+          values.set(name, row.prepare);
+        } else if (row.prepared !== undefined) {
+          values.set(name, row.prepared);
+        }
+      }
+      this.values_ = values;
+    } else {
+      this.values_ = undefined;
+    }
+    return rows;
+  }
+  private _name(name?: string) {
+    if (name !== undefined && name !== null) {
+      let keys = this.keys_;
+      if (keys) {
+        keys.set(this.i_, name);
+      } else {
+        keys = new Map<number, string>();
+        keys.set(this.i_, name);
+        this.keys_ = keys;
+      }
+    }
+  }
+  execute(sql: string, opts?: BatchExecuteArgs): void {
+    this.batch_.push(
+      {
+        sql: sql,
+        args: opts?.args,
+      },
+    );
+
+    this.lock_ = Locker.shared;
+  }
+  rawInsert(sql: string, opts?: BatchResultArgs): void {
+    this._name(opts?.name);
+    this.hook_.add(this.i_++);
+
+    this.batch_.push(
+      {
+        sql: sql,
+        args: opts?.args,
+      },
+      {
+        sql: this.er_.lastInsertRowid_!.id,
+        method: Method.first,
+        result: true,
+      },
+    );
+
+    this.lock_ = Locker.shared;
+  }
+  insert(
+    table: string,
+    values: Record<string, any>,
+    opts?: BatchInsertArgs,
+  ): void {
+    const builder = new Builder();
+    builder.insert(table, values, opts?.conflict);
+
+    this.rawInsert(builder.sql(), {
+      name: opts?.name,
+    });
+  }
+  private _change(sql: string, opts?: BatchExecuteOptions): void {
+    this._name(opts?.name);
+    this.hook_.add(this.i_++);
+
+    this.batch_.push(
+      {
+        sql: sql,
+        args: opts?.args,
+      },
+      {
+        sql: this.er_.changes_!.id,
+        method: Method.first,
+        result: true,
+      },
+    );
+    this.lock_ = Locker.shared;
+  }
+  rawUpdate(sql: string, opts?: BatchExecuteOptions): void {
+    this._change(sql, opts);
+  }
+  update(
+    table: string,
+    values: Record<string, any>,
+    opts?: BatchUpdateOptions,
+  ): void {
+    const builder = new Builder();
+    builder.update(table, values, opts);
+    this._change(builder.sql(), {
+      args: builder.args(),
+    });
+  }
+
+  rawDelete(sql: string, opts?: BatchExecuteOptions): void {
+    this._change(sql, opts);
+  }
+
+  delete(table: string, opts?: BatchDeleteArgs): void {
+    const builder = new Builder();
+    builder.delete(table, opts);
+    this._change(builder.sql(), {
+      args: builder.args(),
+    });
+  }
+
+  rawQuery(sql: string, opts?: BatchExecuteOptions): void {
+    this._name(opts?.name);
+    this.i_++;
+    this.batch_.push(
+      {
+        sql: sql,
+        args: opts?.args,
+      },
+    );
+
+    this.lock_ = Locker.shared;
+  }
+
+  query(table: string, opts?: BatchQueryOptions): void {
+    const builder = new Builder();
+    builder.query(table, opts);
+
+    this._name(opts?.name);
+    this.i_++;
+    this.batch_.push(
+      {
+        sql: builder.sql(),
+        args: builder.args(),
+      },
+    );
+
+    this.lock_ = Locker.shared;
+  }
+
+  prepare(sql: string, opts?: BatchPrepareOptions): void {
+    this._name(opts?.name);
+    this.prepare_.add(this.i_++);
+    this.batch_.push({
+      sql: sql,
+      prepare: true,
+    });
+  }
+  prepareInsert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareInsertOptions,
+  ): void {
+    const builder = new PrepareBuilder();
+    builder.insert(table, columns, opts?.conflict);
+    this.prepare(builder.sql(), opts);
+  }
+  prepareQuery(table: string, opts?: BatchPrepareQueryOptions): void {
+    const builder = new PrepareBuilder();
+    builder.query(table, opts);
+    this.prepare(builder.sql(), opts);
+  }
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: BatchPrepareUpdateOptions,
+  ): void {
+    const builder = new PrepareBuilder();
+    builder.update(table, columns, opts);
+    this.prepare(builder.sql(), opts);
+  }
+  prepareDelete(
+    table: string,
+    opts?: BatchPrepareDeleteOptions,
+  ): void {
+    const builder = new PrepareBuilder();
+    builder.delete(table, opts);
+    this.prepare(builder.sql(), opts);
+  }
+  method(
+    preparor: Preparor,
+    method: Method,
+    opts?: BatchMethodArgs,
+  ) {
+    if (preparor.isClosed) {
+      throw new SqliteError(`Preparor(${preparor.id}) already closed`);
+    }
+    this._name(opts?.name);
+    this.i_++;
+
+    this.batch_.push({
+      sql: preparor.id,
+      args: opts?.args,
+      method: method,
+      result: true,
+    });
+
+    if (method != Method.expandSql && method != Method.columns) {
+      this.lock_ = Locker.shared;
+    }
+  }
 }
