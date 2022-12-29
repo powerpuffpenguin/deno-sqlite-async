@@ -12,7 +12,6 @@ const createSQL = `CREATE TABLE IF NOT EXISTS ${table} (
 );`;
 Deno.test("Batch", async () => {
   const db = await DB.open();
-  db.showSQL = true;
   try {
     const batch = db.batch();
     batch.execute(createSQL);

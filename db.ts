@@ -338,29 +338,12 @@ export class DB extends SqlPrepare implements Executor {
   close() {
     return this.er_.db.close();
   }
-  /**
-   * Execute an SQL query with no return value.
-   *
-   * ```
-   * await db.execute(
-   *    'CREATE TABLE Test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, num REAL)');
-   * ```
-   */
   execute(sql: string, opts?: ExecuteOptions): Promise<void> {
     return this.er_.execute(opts?.lock ?? Locker.shared, sql, {
       ctx: opts?.ctx,
       args: opts?.args,
     });
   }
-  /**
-   * Executes a raw SQL INSERT query and returns the last inserted row ID.
-   * ```
-   * const id1 = await database.rawInsert(
-   *    'INSERT INTO Test(name, value, num) VALUES("some name", 1234, 456.789)');
-   * ```
-   *
-   * 0 could be returned for some specific conflict algorithms if not inserted.
-   */
   rawInsert(
     sql: string,
     opts?: ExecuteOptions,
@@ -374,24 +357,6 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * This method helps insert a map of [values]
-   * into the specified [table] and returns the
-   * id of the last inserted row.
-   *
-   * ```
-   *    const value = {
-   *      'age': 18,
-   *      'name': 'value'
-   *    };
-   *    const id = await db.insert(
-   *      'table',
-   *      value,
-   *      conflictAlgorithm: ConflictAlgorithm.replace,
-   *    );
-   * ```
-   * 0 could be returned for some specific conflict algorithms if not inserted.
-   */
   insert(
     table: string,
     values: Record<string, any>,
@@ -408,15 +373,21 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * Executes a raw SQL SELECT query and returns a list
-   * of the rows that were found.
-   *
-   * ```
-   * const rows = await database.rawQuery('SELECT * FROM Test');
-   * ```
-   */
+
   rawQuery(
+    sql: string,
+    opts?: ExecuteOptions,
+  ): Promise<Array<Row>> {
+    return this.er_.query(
+      opts?.lock ?? Locker.shared,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  rawQueryEntries(
     sql: string,
     opts?: ExecuteOptions,
   ): Promise<Array<RowObject>> {
@@ -429,20 +400,22 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * This is a helper to query a table and return the items found. All optional
-   * clauses and filters are formatted as SQL queries
-   * excluding the clauses' names.
-   *
-   * ```
-   *  const rows = await db.query(tableTodo, {
-   *      columns: ['columnId', 'columnDone', 'columnTitle'],
-   *      where: 'columnId = ?',
-   *      args: [id]
-   *  });
-   * ```
-   */
   query(
+    table: string,
+    opts?: QueryOptions,
+  ): Promise<Array<Row>> {
+    const builder = new Builder();
+    builder.query(table, opts);
+    return this.er_.query(
+      opts?.lock ?? Locker.shared,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  queryEntries(
     table: string,
     opts?: QueryOptions,
   ): Promise<Array<RowObject>> {
@@ -457,16 +430,6 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * Executes a raw SQL UPDATE query and returns
-   * the number of changes made.
-   *
-   * ```
-   * int count = await database.rawUpdate(
-   *   'UPDATE Test SET name = ?, value = ? WHERE name = ?', {
-   *   args: ['updated name', '9876', 'some name']});
-   * ```
-   */
   rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | bigint> {
     return this.er_.changes(
       opts?.lock ?? Locker.shared,
@@ -477,18 +440,6 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * Convenience method for updating rows in the database. Returns
-   * the number of changes made
-   *
-   * Update [table] with [values], a map from column names to new column
-   * values. null is a valid value that will be translated to NULL.
-   *
-   * ```
-   * const count = await db.update(tableTodo, todo.toMap(), {
-   *    where: `${columnId} = ?`, args: [todo.id]});
-   * ```
-   */
   update(
     table: string,
     values: Record<string, any>,
@@ -505,15 +456,6 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * Executes a raw SQL DELETE query and returns the
-   * number of changes made.
-   *
-   * ```
-   * const count = await db
-   *   .rawDelete('DELETE FROM Test WHERE name = ?', {args: ['another name']});
-   * ```
-   */
   rawDelete(sql: string, opts?: ExecuteOptions): Promise<number | bigint> {
     return this.er_.changes(
       opts?.lock ?? Locker.shared,
@@ -524,19 +466,6 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  /**
-   * Convenience method for deleting rows in the database.
-   *
-   * Delete from [table]
-   *
-   * You may include ?s in the where clause, which will be replaced by the
-   * values from [args]
-   *
-   * Returns the number of rows affected.
-   * ```
-   *  const count = await db.delete(tableTodo, {where: 'columnId = ?', args: [id]});
-   * ```
-   */
   delete(table: string, opts?: DeleteOptions): Promise<number | bigint> {
     const builder = new Builder();
     builder.delete(table, opts);

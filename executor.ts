@@ -217,6 +217,13 @@ export interface Executor {
   query(
     table: string,
     opts?: QueryOptions,
+  ): Promise<Array<Row>>;
+  /**
+   * @see {@link Executor.query}
+   */
+  queryEntries(
+    table: string,
+    opts?: QueryOptions,
   ): Promise<Array<RowObject>>;
   /**
    * Executes a raw SQL SELECT query and returns a list
@@ -227,6 +234,13 @@ export interface Executor {
    * ```
    */
   rawQuery(
+    sql: string,
+    opts?: ExecuteOptions,
+  ): Promise<Array<Row>>;
+  /**
+   * @see {@link Executor.rawQuery}
+   */
+  rawQueryEntries(
     sql: string,
     opts?: ExecuteOptions,
   ): Promise<Array<RowObject>>;
