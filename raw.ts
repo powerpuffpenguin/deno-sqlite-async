@@ -139,9 +139,11 @@ export class RawDB {
     }) as any;
     for (const item of arrs) {
       if (item.prepared !== undefined) {
+        const prepared = (item as any).prepared;
         item.prepared = new RawPrepared(
           this.caller_,
-          (item as any).prepared,
+          prepared.id,
+          prepared.sql,
         );
       }
     }
@@ -179,7 +181,7 @@ export class RawDB {
       ctx: opts?.ctx,
       sql: sql,
     });
-    return new RawPrepared(this.caller_, id);
+    return new RawPrepared(this.caller_, id, sql);
   }
   /**
    * Call the core interface directly
@@ -244,19 +246,24 @@ export interface RawBatch {
 
 export class RawPrepared {
   private id_?: number;
-  constructor(private readonly caller_: Caller, readonly id: number) {
+  constructor(
+    private readonly caller_: Caller,
+    readonly id: number,
+    readonly sql: string,
+  ) {
     this.id_ = id;
   }
   get isClosed(): boolean {
     return this.id_ === undefined;
   }
-  close() {
+  close(): boolean {
     const id = this.id_;
     if (id === undefined) {
-      return;
+      return false;
     }
     this.id_ = undefined;
     this._close(id);
+    return true;
   }
   private async _close(id: number) {
     try {

@@ -1,5 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { Context } from "./deps/easyts/context/mod.ts";
+import { ArgsOptions, ContextOptions } from "./options.ts";
 import { QueryParameterSet, Row, RowObject } from "./sqlite.ts";
 /**
  * Insert/Update conflict resolver
@@ -72,8 +73,7 @@ export enum Locker {
   exclusive,
 }
 
-export interface Options {
-  ctx?: Context;
+export interface Options extends ContextOptions {
   lock?: Locker;
 }
 export interface ExecuteOptions extends Options {
@@ -81,6 +81,9 @@ export interface ExecuteOptions extends Options {
 }
 
 export interface InsertOptions extends Options {
+  conflict?: Conflict;
+}
+export interface PrepareInsertOptions extends ContextOptions {
   conflict?: Conflict;
 }
 export interface QueryOptions extends ExecuteOptions {
@@ -93,7 +96,21 @@ export interface QueryOptions extends ExecuteOptions {
   limit?: number;
   offset?: number | bigint;
 }
+export interface PrepareQueryOptions extends ContextOptions {
+  distinct?: boolean;
+  columns?: Array<string>;
+  where?: string;
+  groupBy?: string;
+  having?: string;
+  orderBy?: string;
+  limit?: number;
+  offset?: number | bigint;
+}
 export interface UpdateOptions extends ExecuteOptions {
+  where?: string;
+  conflict?: Conflict;
+}
+export interface PrepareUpdateOptions extends ContextOptions {
   where?: string;
   conflict?: Conflict;
 }

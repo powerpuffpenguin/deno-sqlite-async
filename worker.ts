@@ -95,7 +95,10 @@ interface MethodResult {
   prepare?: any;
 }
 interface BatchResult extends MethodResult {
-  prepared?: number;
+  prepared?: {
+    id: number;
+    sql: string;
+  };
   sql?: Array<Row | RowObject>;
   prepares?: Array<any>;
 }
@@ -233,6 +236,8 @@ class Database {
                 );
               }
             }
+          } else {
+            throw new SqliteError("unknow method prepared.undefined");
           }
         } else if (batch.prepare) {
           const id = this._id();
@@ -244,7 +249,7 @@ class Database {
           });
           if (batch.result) {
             result.push({
-              prepared: id,
+              prepared: { id: id, sql: batch.sql },
             });
           }
         } else {

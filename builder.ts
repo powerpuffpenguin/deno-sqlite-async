@@ -3,6 +3,8 @@ import { QueryParameter, QueryParameterSet, SqliteError } from "./sqlite.ts";
 import {
   Conflict,
   DeleteOptions,
+  PrepareQueryOptions,
+  PrepareUpdateOptions,
   QueryOptions,
   UpdateOptions,
 } from "./executor.ts";
@@ -70,6 +72,78 @@ export function escapeName(name: string): string {
   }
   return name;
 }
+function buildQuery(table: string, opts?: PrepareQueryOptions): string {
+  const groupBy = opts?.groupBy ?? "";
+  const having = opts?.having ?? "";
+  if (groupBy === "" && having !== "") {
+    throw new SqliteError(
+      "HAVING clauses are only permitted when using a groupBy clause",
+    );
+  }
+  const sql = new Array<string>();
+  sql.push("SELECT ");
+  if (opts?.distinct) {
+    sql.push("DISTINCT ");
+  }
+  const columns = opts?.columns;
+  const len = columns?.length ?? 0;
+  if (len == 0) {
+    sql.push("* ");
+  } else {
+    for (let i = 0; i < len; i++) {
+      if (i == 0) {
+        sql.push(escapeName(columns![i]));
+      } else {
+        sql.push(`, ${escapeName(columns![i])}`);
+      }
+    }
+    sql.push(" ");
+  }
+  sql.push(` FROM ${escapeName(table)}`);
+  const where = opts?.where ?? "";
+  if (where != "") {
+    sql.push(` WHERE ${where}`);
+  }
+  if (groupBy != "") {
+    sql.push(` GROUP BY ${groupBy}`);
+  }
+  if (having != "") {
+    sql.push(` HAVING ${having}`);
+  }
+  const orderBy = opts?.orderBy ?? "";
+  if (orderBy != "") {
+    sql.push(` ORDER BY ${orderBy}`);
+  }
+  const limit = opts?.limit ?? 0;
+  if (limit > 0) {
+    sql.push(` LIMIT ${limit}`);
+  }
+  const offset = opts?.offset ?? 0;
+  if (offset > 0) {
+    sql.push(` OFFSET ${offset}`);
+  }
+
+  return sql.join("");
+}
+const matchName = /^[a-z][a-z\_0-9]*$/;
+function formatVarName(name: string) {
+  if (name.startsWith(":")) {
+    const str = name.substring(1).toLocaleLowerCase();
+    if (escapeNames.has(name) || !matchName.test(str)) {
+      throw new SqliteError(
+        `var name '${name}' not supported`,
+      );
+    }
+    return name;
+  }
+  const str = name.toLocaleLowerCase();
+  if (escapeNames.has(str) || !matchName.test(str)) {
+    throw new SqliteError(
+      `var name '${name}' not supported`,
+    );
+  }
+  return `:${name}`;
+}
 export class Builder {
   private sql_ = "";
   private args_?: QueryParameterSet;
@@ -130,58 +204,11 @@ export class Builder {
     this.sql_ = sql.join("");
   }
   query(table: string, opts?: QueryOptions) {
-    const groupBy = opts?.groupBy ?? "";
-    const having = opts?.having ?? "";
-    if (groupBy === "" && having !== "") {
-      throw new SqliteError(
-        "HAVING clauses are only permitted when using a groupBy clause",
-      );
+    const args = opts?.args;
+    if (!Array.isArray(args) || args.length != 0) {
+      this.args_ = args;
     }
-    const sql = new Array<string>();
-    sql.push("SELECT ");
-    if (opts?.distinct) {
-      sql.push("DISTINCT ");
-    }
-    const columns = opts?.columns;
-    const len = columns?.length ?? 0;
-    if (len == 0) {
-      sql.push("* ");
-    } else {
-      for (let i = 0; i < len; i++) {
-        if (i == 0) {
-          sql.push(escapeName(columns![i]));
-        } else {
-          sql.push(`, ${escapeName(columns![i])}`);
-        }
-      }
-      sql.push(" ");
-    }
-    sql.push(` FROM ${escapeName(table)}`);
-    const where = opts?.where ?? "";
-    if (where != "") {
-      sql.push(` WHERE ${where}`);
-    }
-    if (groupBy != "") {
-      sql.push(` GROUP BY ${groupBy}`);
-    }
-    if (having != "") {
-      sql.push(` HAVING ${having}`);
-    }
-    const orderBy = opts?.orderBy ?? "";
-    if (orderBy != "") {
-      sql.push(` ORDER BY ${orderBy}`);
-    }
-    const limit = opts?.limit ?? 0;
-    if (limit > 0) {
-      sql.push(` LIMIT ${limit}`);
-    }
-    const offset = opts?.offset ?? 0;
-    if (offset > 0) {
-      sql.push(` OFFSET ${offset}`);
-    }
-
-    this.args_ = opts?.args;
-    this.sql_ = sql.join("");
+    this.sql_ = buildQuery(table, opts);
   }
   update(table: string, values: Record<string, any>, opts?: UpdateOptions) {
     const args = new _Parameter(opts?.args);
@@ -303,5 +330,166 @@ class _Parameter {
       }
       return args;
     }
+  }
+}
+export interface ColumnVar {
+  name: string;
+  var: string;
+}
+
+export class PrepareBuilder {
+  private sql_ = "";
+  sql(): string {
+    return this.sql_;
+  }
+  insert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    conflict?: Conflict,
+  ) {
+    const len = columns.length;
+    if (len == 0) {
+      throw new SqliteError(
+        `columns.length == 0`,
+      );
+    }
+    const isString = typeof columns[0] === "string";
+
+    const sql = new Array<string>();
+    switch (conflict) {
+      case Conflict.rollback:
+        sql.push(`INSERT OR ROLLBACK INTO ${escapeName(table)} (`);
+        break;
+      case Conflict.abort:
+        sql.push(`INSERT OR ABORT INTO ${escapeName(table)} (`);
+        break;
+      case Conflict.fail:
+        sql.push(`INSERT OR FAIL INTO ${escapeName(table)} (`);
+        break;
+      case Conflict.ignore:
+        sql.push(`INSERT OR IGNORE INTO ${escapeName(table)} (`);
+        break;
+      case Conflict.replace:
+        sql.push(`INSERT OR REPLACE INTO ${escapeName(table)} (`);
+        break;
+      default:
+        sql.push(`INSERT INTO ${escapeName(table)} (`);
+        break;
+    }
+    let i = 0;
+    for (const key of columns) {
+      if (typeof key === "string") {
+        if (!isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        sql.push(i == 0 ? escapeName(key) : `, ${escapeName(key)}`);
+      } else {
+        if (isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        sql.push(i == 0 ? escapeName(key.name) : `, ${escapeName(key.name)}`);
+      }
+      i++;
+    }
+    sql.push(") VALUES (");
+    i = 0;
+    for (const key of columns) {
+      if (typeof key == "string") {
+        if (!isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        sql.push(i == 0 ? "?" : ", ?");
+      } else {
+        if (isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        const name = formatVarName(key.var);
+        sql.push(i == 0 ? name : `, ${name}`);
+      }
+
+      i++;
+    }
+    sql.push(")");
+
+    this.sql_ = sql.join("");
+  }
+  query(table: string, opts?: PrepareQueryOptions) {
+    this.sql_ = buildQuery(table, opts);
+  }
+  update(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: PrepareUpdateOptions,
+  ) {
+    const len = columns.length;
+    if (len == 0) {
+      throw new SqliteError(
+        `columns.length == 0`,
+      );
+    }
+    const isString = typeof columns[0] === "string";
+
+    const sql = new Array<string>();
+    switch (opts?.conflict) {
+      case Conflict.rollback:
+        sql.push(`UPDATE OR ROLLBACK ${escapeName(table)} SET `);
+        break;
+      case Conflict.abort:
+        sql.push(`UPDATE OR ABORT ${escapeName(table)} SET `);
+        break;
+      case Conflict.fail:
+        sql.push(`UPDATE OR FAIL ${escapeName(table)} SET `);
+        break;
+      case Conflict.ignore:
+        sql.push(`UPDATE OR IGNORE ${escapeName(table)} SET `);
+        break;
+      case Conflict.replace:
+        sql.push(`UPDATE OR REPLACE ${escapeName(table)} SET `);
+        break;
+      default:
+        sql.push(`UPDATE ${escapeName(table)} SET `);
+        break;
+    }
+    let i = 0;
+    for (const key of columns) {
+      if (typeof key === "string") {
+        if (!isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        sql.push(
+          i == 0 ? `${escapeName(key)} = ?` : `, ${escapeName(key)} = ?`,
+        );
+      } else {
+        if (isString) {
+          throw new SqliteError(
+            "columns does not support mixing 'string' and 'ColumnVar'",
+          );
+        }
+        const name = formatVarName(key.var);
+        sql.push(
+          i == 0
+            ? `${escapeName(key.name)} = ${name}`
+            : `, ${escapeName(key.name)} = ${name}`,
+        );
+      }
+      i++;
+    }
+
+    const where = opts?.where ?? "";
+    if (where != "") {
+      sql.push(` WHERE ${where}`);
+    }
+
+    this.sql_ = sql.join("");
   }
 }

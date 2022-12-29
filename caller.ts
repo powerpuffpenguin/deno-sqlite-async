@@ -153,7 +153,10 @@ export interface InvokeBatchMethod {
   result?: boolean;
 }
 export interface InvokeBatchResult {
-  prepared?: number;
+  prepared?: {
+    id: number;
+    sql: string;
+  };
   sql?: Array<Row>;
   prepare?: Array<ColumnName | Row | RowObject> | Row | RowObject | string;
   prepares?: Array<

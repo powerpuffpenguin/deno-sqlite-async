@@ -15,12 +15,15 @@ import {
   InsertOptions,
   Locker,
   Options,
+  PrepareInsertOptions,
+  PrepareQueryOptions,
+  PrepareUpdateOptions,
   QueryOptions,
   UpdateOptions,
 } from "./executor.ts";
 import { Locked, RW } from "./internal/rw.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
-import { Builder } from "./builder.ts";
+import { Builder, ColumnVar, PrepareBuilder } from "./builder.ts";
 import { log } from "./log.ts";
 import { ArgsOptions, ContextOptions } from "./options.ts";
 
@@ -38,6 +41,27 @@ export class _Executor {
   rw: RW;
   constructor(readonly db: RawDB, public showSQL: boolean) {
     this.rw = new RW(db.done());
+  }
+  lastInsertRowid_: RawPrepared | undefined;
+  changes_: RawPrepared | undefined;
+  async init() {
+    const result = await this.db.batch({
+      savepoint: true,
+      batch: [
+        {
+          sql: "SELECT last_insert_rowid()",
+          result: true,
+          prepare: true,
+        },
+        {
+          sql: "SELECT changes()",
+          result: true,
+          prepare: true,
+        },
+      ],
+    });
+    this.lastInsertRowid_ = result[0].prepared;
+    this.changes_ = result[1].prepared;
   }
   private _locked(
     lock: Locker,
@@ -114,13 +138,14 @@ export class _Executor {
             args: opts?.args,
           },
           {
-            sql: "SELECT last_insert_rowid()",
+            sql: this.lastInsertRowid_!.id,
+            method: Method.first,
             result: true,
           },
         ],
       });
-      const row = rows[0].sql![0];
-      return row[0] as number;
+      const row = rows[0].prepare as Array<number>;
+      return row[0];
     } finally {
       locked?.unlock();
       this._log(Date.now() - at, sql, opts?.args);
@@ -143,12 +168,13 @@ export class _Executor {
             args: opts?.args,
           },
           {
-            sql: "SELECT changes()",
+            sql: this.changes_!.id,
+            method: Method.first,
             result: true,
           },
         ],
       });
-      const row = rows[0].sql![0];
+      const row = rows[0].prepare as Array<number>;
       return row[0] as number;
     } finally {
       locked?.unlock();
@@ -168,8 +194,44 @@ export class _Executor {
     }
   }
 }
-
-export class DB {
+export class SqlPrepare {
+  constructor(protected readonly er_: _Executor) {}
+  prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
+    return this.er_.prepare(sql, opts);
+  }
+  prepareChanges(): Prepared {
+    const er = this.er_;
+    return new Prepared(er, er.changes_!);
+  }
+  prepareLastInsertRowid(): Prepared {
+    const er = this.er_;
+    return new Prepared(er, er.lastInsertRowid_!);
+  }
+  prepareInsert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: PrepareInsertOptions,
+  ) {
+    const builder = new PrepareBuilder();
+    builder.insert(table, columns, opts?.conflict);
+    return this.er_.prepare(builder.sql(), opts);
+  }
+  prepareQuery(table: string, opts?: PrepareQueryOptions) {
+    const builder = new PrepareBuilder();
+    builder.query(table, opts);
+    return this.er_.prepare(builder.sql(), opts);
+  }
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: PrepareUpdateOptions,
+  ) {
+    const builder = new PrepareBuilder();
+    builder.update(table, columns, opts);
+    return this.er_.prepare(builder.sql(), opts);
+  }
+}
+export class DB extends SqlPrepare {
   static async open(
     path = ":memory:",
     opts?: OpenOptions,
@@ -179,14 +241,23 @@ export class DB {
       throw new SqliteError(`db version '${version}' not supported`);
     }
     const rawdb = await RawDB.open(path, opts);
-    const db = new DB(new _Executor(rawdb, opts?.showSQL ?? false));
+    const er = new _Executor(rawdb, opts?.showSQL ?? false);
+    try {
+      await er.init();
+    } catch (e) {
+      rawdb.close();
+      throw e;
+    }
+    const db = new DB(er);
 
     return db;
   }
   get db() {
     return this.er_.db;
   }
-  constructor(private readonly er_: _Executor) {}
+  constructor(er: _Executor) {
+    super(er);
+  }
   get showSQL(): boolean {
     return this.er_.showSQL;
   }
@@ -416,22 +487,29 @@ export class DB {
       },
     );
   }
-  prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
-    return this.er_.prepare(sql, opts);
-  }
 }
 
 export class Prepared {
   constructor(
     private readonly er_: _Executor,
-    private readonly prepare_: RawPrepared,
+    private readonly prepared_: RawPrepared,
   ) {
   }
-  close() {
-    this.prepare_.close();
+  private closed_ = false;
+  close(): boolean {
+    if (this.closed_) {
+      return false;
+    }
+    this.closed_ = true;
+    const er = this.er_;
+    const prepared = this.prepared_;
+    if (prepared != er.lastInsertRowid_ && prepared != er.changes_) {
+      this.prepared_.close();
+    }
+    return true;
   }
   columns(opts?: Options): Promise<Array<ColumnName>> {
-    const prepare = this.prepare_;
+    const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
