@@ -708,7 +708,7 @@ export class Batch implements BatchExecutor {
       }
     }
   }
-  execute(sql: string, opts?: BatchExecuteArgs): void {
+  execute(sql: string, opts?: BatchExecuteArgs) {
     if (opts?.result) {
       this._name(opts?.name);
       this.i_++;
@@ -726,8 +726,10 @@ export class Batch implements BatchExecutor {
       args: opts?.args,
     });
     this.lock_ = Locker.shared;
+
+    return this;
   }
-  rawInsert(sql: string, opts?: BatchArgs): void {
+  rawInsert(sql: string, opts?: BatchArgs) {
     this._name(opts?.name);
     this.hook_.add(this.i_++);
 
@@ -748,12 +750,14 @@ export class Batch implements BatchExecutor {
       args: opts?.args,
     });
     this.lock_ = Locker.shared;
+
+    return this;
   }
   insert(
     table: string,
     values: Record<string, any>,
     opts?: BatchInsertArgs,
-  ): void {
+  ) {
     const builder = new Builder();
     builder.insert(table, values, opts?.conflict);
 
@@ -761,6 +765,8 @@ export class Batch implements BatchExecutor {
       name: opts?.name,
       args: builder.args(),
     });
+
+    return this;
   }
   private _change(sql: string, opts?: BatchArgs): void {
     this._name(opts?.name);
@@ -784,36 +790,64 @@ export class Batch implements BatchExecutor {
     });
     this.lock_ = Locker.shared;
   }
-  rawDelete(sql: string, opts?: BatchArgs): void {
+  rawDelete(sql: string, opts?: BatchArgs) {
     this._change(sql, opts);
+    return this;
   }
 
-  delete(table: string, opts?: BatchDeleteArgs): void {
+  delete(table: string, opts?: BatchDeleteArgs) {
     const builder = new Builder();
     builder.delete(table, opts);
     this._change(builder.sql(), {
       name: opts?.name,
       args: builder.args(),
     });
+    return this;
   }
 
-  rawUpdate(sql: string, opts?: BatchArgs): void {
+  rawUpdate(sql: string, opts?: BatchArgs) {
     this._change(sql, opts);
+    return this;
   }
   update(
     table: string,
     values: Record<string, any>,
     opts?: BatchUpdateArgs,
-  ): void {
+  ) {
     const builder = new Builder();
     builder.update(table, values, opts);
     this._change(builder.sql(), {
       name: opts?.name,
       args: builder.args(),
     });
+    return this;
   }
 
-  rawQuery(sql: string, opts?: BatchArgs): void {
+  query(table: string, opts?: BatchQueryArgs) {
+    const builder = new Builder();
+    builder.query(table, opts);
+    const sql = builder.sql();
+    const args = builder.args();
+
+    this._name(opts?.name);
+    this.i_++;
+    this.batch_.push(
+      {
+        sql: sql,
+        args: args,
+        result: true,
+      },
+    );
+
+    this.sqls_.push({
+      sql: sql,
+      args: args,
+    });
+    this.lock_ = Locker.shared;
+
+    return this;
+  }
+  rawQuery(sql: string, opts?: BatchArgs) {
     this._name(opts?.name);
     this.i_++;
     this.batch_.push(
@@ -821,7 +855,6 @@ export class Batch implements BatchExecutor {
         sql: sql,
         args: opts?.args,
         result: true,
-        entries: true,
       },
     );
 
@@ -830,9 +863,10 @@ export class Batch implements BatchExecutor {
       args: opts?.args,
     });
     this.lock_ = Locker.shared;
-  }
 
-  query(table: string, opts?: BatchQueryArgs): void {
+    return this;
+  }
+  queryEntries(table: string, opts?: BatchQueryArgs) {
     const builder = new Builder();
     builder.query(table, opts);
     const sql = builder.sql();
@@ -854,46 +888,78 @@ export class Batch implements BatchExecutor {
       args: args,
     });
     this.lock_ = Locker.shared;
-  }
 
-  prepare(sql: string, opts?: BatchNameArgs): void {
+    return this;
+  }
+  rawQueryEntries(sql: string, opts?: BatchArgs) {
+    this._name(opts?.name);
+    this.i_++;
+    this.batch_.push(
+      {
+        sql: sql,
+        args: opts?.args,
+        result: true,
+        entries: true,
+      },
+    );
+
+    this.sqls_.push({
+      sql: sql,
+      args: opts?.args,
+    });
+    this.lock_ = Locker.shared;
+
+    return this;
+  }
+  prepare(sql: string, opts?: BatchNameArgs) {
     this._name(opts?.name);
     this.prepare_.add(this.i_++);
     this.batch_.push({
       sql: sql,
       prepare: true,
+      result: true,
     });
+
+    return this;
   }
   prepareInsert(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
     opts?: BatchPrepareInsertArgs,
-  ): void {
+  ) {
     const builder = new PrepareBuilder();
     builder.insert(table, columns, opts?.conflict);
     this.prepare(builder.sql(), opts);
+
+    return this;
   }
   prepareDelete(
     table: string,
     opts?: BatchPrepareDeleteArgs,
-  ): void {
+  ) {
     const builder = new PrepareBuilder();
     builder.delete(table, opts);
     this.prepare(builder.sql(), opts);
+
+    return this;
   }
   prepareUpdate(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
     opts?: BatchPrepareUpdateArgs,
-  ): void {
+  ) {
     const builder = new PrepareBuilder();
     builder.update(table, columns, opts);
     this.prepare(builder.sql(), opts);
+
+    return this;
   }
-  prepareQuery(table: string, opts?: BatchPrepareQueryArgs): void {
+  prepareQuery(table: string, opts?: BatchPrepareQueryArgs) {
     const builder = new PrepareBuilder();
     builder.query(table, opts);
     this.prepare(builder.sql(), opts);
+
+    return this;
   }
 
   method(
@@ -904,14 +970,17 @@ export class Batch implements BatchExecutor {
     if (preparor.isClosed) {
       throw new SqliteError(`Preparor(${preparor.id}) already closed`);
     }
-    this._name(opts?.name);
-    this.i_++;
 
+    const result = method == Method.execute ? undefined : true;
+    if (result) {
+      this._name(opts?.name);
+      this.i_++;
+    }
     this.batch_.push({
       sql: preparor.id,
       args: opts?.args,
       method: method,
-      result: true,
+      result: result,
     });
 
     switch (method) {
@@ -930,5 +999,7 @@ export class Batch implements BatchExecutor {
     if (method != Method.expandSql && method != Method.columns) {
       this.lock_ = Locker.shared;
     }
+
+    return this;
   }
 }

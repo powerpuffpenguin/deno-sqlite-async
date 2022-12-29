@@ -1,8 +1,9 @@
 // deno-lint-ignore-file no-explicit-any
 import { assertEquals } from "./deps/std/testing/asserts.ts";
 import { DB } from "./db.ts";
-import { Conflict } from "./executor.ts";
+import { Conflict, Preparor } from "./executor.ts";
 import { RowObject } from "./sqlite.ts";
+import { Method } from "./caller.ts";
 const table = "king";
 const columnID = "id";
 const columnName = "name";
@@ -14,15 +15,15 @@ Deno.test("Batch", async () => {
   const db = await DB.open();
   try {
     const batch = db.batch();
-    batch.execute(createSQL);
-    batch.delete(table, { name: "v0" });
-    batch.rawInsert(
-      `INSERT INTO ${table} (${columnID}, ${columnName}) VALUES (?,?)`,
-      {
-        name: "v1",
-        args: [1, "n1"],
-      },
-    );
+    batch.execute(createSQL)
+      .delete(table, { name: "v0" })
+      .rawInsert(
+        `INSERT INTO ${table} (${columnID}, ${columnName}) VALUES (?,?)`,
+        {
+          name: "v1",
+          args: [1, "n1"],
+        },
+      );
     for (let i = 2; i <= 10; i++) {
       batch.insert(table, {
         "id": i,
@@ -63,7 +64,7 @@ Deno.test("Batch", async () => {
       args: ["name3"],
     });
 
-    batch.query(table, {
+    batch.queryEntries(table, {
       name: "q2",
       distinct: true,
       columns: [columnID, columnName],
@@ -74,7 +75,7 @@ Deno.test("Batch", async () => {
       orderBy: `${columnID} desc`,
     });
 
-    batch.query(table, {
+    batch.queryEntries(table, {
       name: "q8",
       orderBy: `${columnID}`,
     });
@@ -104,6 +105,58 @@ Deno.test("Batch", async () => {
       { id: 8, name: "n8" },
       { id: 9, name: "n9" },
     ]);
+  } finally {
+    db.close();
+  }
+});
+Deno.test("Batch prepare", async () => {
+  const db = await DB.open();
+  try {
+    await db.execute(createSQL);
+
+    let batch = db.batch();
+    batch
+      .prepareDelete(table, { name: "d" })
+      .prepareInsert(table, [columnID, columnName], { name: "i" });
+
+    batch
+      .prepareDelete(table, {
+        name: "d2",
+        where: `${columnID} < ? or ${columnName} = ?`,
+      })
+      .prepareDelete(table, {
+        name: "d1",
+        where: `${columnID} = :id`,
+      });
+
+    batch.prepareQuery(table, {
+      name: "q8",
+      orderBy: columnID,
+    });
+    await batch.commit();
+    let values = batch.values()!;
+
+    batch = db.batch();
+    batch.method(
+      values.get("d") as any,
+      Method.execute,
+    );
+    let p = values.get("i") as Preparor;
+    for (let i = 1; i < 10; i++) {
+      batch.method(p, Method.execute, {
+        args: [i, `v${i}`],
+      });
+    }
+
+    p = values.get("q8") as Preparor;
+    batch.method(p, Method.allEntries, {
+      name: "q8",
+    });
+
+    const rows = await batch.commit();
+    values = batch.values()!;
+    console.log(rows);
+    console.log(values);
   } finally {
     db.close();
   }

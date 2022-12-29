@@ -358,7 +358,7 @@ export interface Preparor {
   ): Promise<Array<RowObject>>;
   execute(
     opts?: ExecuteOptions,
-  ): Promise<undefined>;
+  ): Promise<void>;
   expandSql(
     opts?: ExecuteOptions,
   ): Promise<string>;
@@ -449,14 +449,14 @@ export interface BatchExecutor {
    *
    * @see {@link Executor.execute}
    */
-  execute(sql: string, opts?: BatchExecuteArgs): void;
+  execute(sql: string, opts?: BatchExecuteArgs): BatchExecutor;
 
   /**
    * Add an INSERT command to the batch
    *
    * @see {@link Executor.rawInsert}
    */
-  rawInsert(sql: string, opts?: BatchArgs): void;
+  rawInsert(sql: string, opts?: BatchArgs): BatchExecutor;
 
   /**
    * Add an INSERT command to the batch
@@ -467,27 +467,27 @@ export interface BatchExecutor {
     table: string,
     values: Record<string, any>,
     opts?: BatchInsertArgs,
-  ): void;
+  ): BatchExecutor;
 
   /**
    * Add a DELETE command to the batch
    *
    * @see {@link Executor.rawDelete}
    */
-  rawDelete(sql: string, opts?: BatchArgs): void;
+  rawDelete(sql: string, opts?: BatchArgs): BatchExecutor;
 
   /**
    * Add a DELETE command to the batch
    *
    * @see {@link Executor.delete}
    */
-  delete(table: string, opts?: BatchDeleteArgs): void;
+  delete(table: string, opts?: BatchDeleteArgs): BatchExecutor;
 
   /**
    * Add a UPDATE command to the batch
    * @see {@link Executor.rawUpdate}
    */
-  rawUpdate(sql: string, opts?: BatchArgs): void;
+  rawUpdate(sql: string, opts?: BatchArgs): BatchExecutor;
 
   /**
    * Add a UPDATE command to the batch
@@ -498,20 +498,32 @@ export interface BatchExecutor {
     table: string,
     values: Record<string, any>,
     opts?: BatchUpdateArgs,
-  ): void;
+  ): BatchExecutor;
 
   /**
    * Add a SELECT command to the batch
    *
    * @see {@link Executor.query}
    */
-  query(table: string, opts?: BatchArgs): void;
+  query(table: string, opts?: BatchArgs): BatchExecutor;
   /**
    * Add a SELECT command to the batch
    *
    * @see {@link Executor.rawQuery}
    */
-  rawQuery(sql: string, opts?: BatchQueryArgs): void;
+  rawQuery(sql: string, opts?: BatchQueryArgs): BatchExecutor;
+  /**
+   * Add a SELECT command to the batch
+   *
+   * @see {@link Executor.queryEntries}
+   */
+  queryEntries(table: string, opts?: BatchArgs): BatchExecutor;
+  /**
+   * Add a SELECT command to the batch
+   *
+   * @see {@link Executor.rawQueryEntries}
+   */
+  rawQueryEntries(sql: string, opts?: BatchQueryArgs): BatchExecutor;
 
   /**
    * Prepares the given SQL query, so that it
@@ -520,7 +532,7 @@ export interface BatchExecutor {
    *
    * @see {@link Executor.prepare}
    */
-  prepare(sql: string, opts?: BatchNameArgs): void;
+  prepare(sql: string, opts?: BatchNameArgs): BatchExecutor;
   /**
    * @see {@link Executor.prepareInsert}
    */
@@ -528,14 +540,14 @@ export interface BatchExecutor {
     table: string,
     columns: Array<string> | Array<ColumnVar>,
     opts?: BatchPrepareInsertArgs,
-  ): void;
+  ): BatchExecutor;
   /**
    * @see {@link Executor.prepareDelete}
    */
   prepareDelete(
     table: string,
     opts?: BatchPrepareDeleteArgs,
-  ): void;
+  ): BatchExecutor;
 
   /**
    * @see {@link Executor.prepareUpdate}
@@ -544,12 +556,12 @@ export interface BatchExecutor {
     table: string,
     columns: Array<string> | Array<ColumnVar>,
     opts?: BatchPrepareUpdateArgs,
-  ): void;
+  ): BatchExecutor;
 
   /**
    * @see {@link Executor.prepareQuery}
    */
-  prepareQuery(table: string, opts?: BatchPrepareQueryArgs): void;
+  prepareQuery(table: string, opts?: BatchPrepareQueryArgs): BatchExecutor;
   /**
    * Add calls to the Prepare method to the batch
    * @see {@link Preparor}
@@ -558,5 +570,5 @@ export interface BatchExecutor {
     preparor: Preparor,
     method: Method,
     opts?: BatchArgs,
-  ): void;
+  ): BatchExecutor;
 }
