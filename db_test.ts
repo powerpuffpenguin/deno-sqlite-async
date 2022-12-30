@@ -57,11 +57,11 @@ Deno.test("Batch", async () => {
       },
     });
     batch.update(table, {
-      name: "n3",
+      name: "name5",
     }, {
-      name: "u3",
+      name: "u5",
       where: `${columnName} = ?`,
-      args: ["name3"],
+      args: ["n5"],
     });
 
     batch.queryEntries(table, {
@@ -89,7 +89,7 @@ Deno.test("Batch", async () => {
     }
     assertEquals(values.get("d2"), 2);
     assertEquals(values.get("d1"), 1);
-    assertEquals(values.get("u3"), 1);
+    assertEquals(values.get("u5"), 1);
     const q2 = values.get("q2") as Array<RowObject>;
     assertEquals(q2, [
       { id: 8, name: "n8" },
@@ -97,9 +97,9 @@ Deno.test("Batch", async () => {
     ]);
     const q8 = values.get("q8") as Array<RowObject>;
     assertEquals(q8, [
-      { id: 3, name: "n3" },
+      { id: 3, name: "name3" },
       { id: 4, name: "n4" },
-      { id: 5, name: "n5" },
+      { id: 5, name: "name5" },
       { id: 6, name: "n6" },
       { id: 7, name: "n7" },
       { id: 8, name: "n8" },
@@ -117,7 +117,15 @@ Deno.test("Batch prepare", async () => {
     let batch = db.batch();
     batch
       .prepareDelete(table, { name: "d" })
-      .prepareInsert(table, [columnID, columnName], { name: "i" });
+      .prepareInsert(table, [columnID, columnName], { name: "i" })
+      .prepareInsert(table, [columnID, columnName], {
+        name: "i3",
+        conflict: Conflict.replace,
+      })
+      .prepareInsert(table, [columnID, columnName], {
+        name: "i4",
+        conflict: Conflict.ignore,
+      });
 
     batch
       .prepareDelete(table, {
@@ -127,12 +135,31 @@ Deno.test("Batch prepare", async () => {
       .prepareDelete(table, {
         name: "d1",
         where: `${columnID} = :id`,
+      })
+      .prepareUpdate(table, [columnName], {
+        name: "u3",
+        where: `${columnName} = ?`,
+      })
+      .prepareUpdate(table, [columnName], {
+        name: "u5",
+        where: `${columnName} = ?`,
       });
 
-    batch.prepareQuery(table, {
-      name: "q8",
-      orderBy: columnID,
-    });
+    batch
+      .prepareQuery(table, {
+        name: "q2",
+        distinct: true,
+        columns: [columnID, columnName],
+        where: `${columnID} > ?`,
+        limit: 2,
+        offset: 1,
+        orderBy: `${columnID} desc`,
+      })
+      .prepareQuery(table, {
+        name: "q8",
+        orderBy: `${columnID}`,
+      });
+
     await batch.commit();
     let values = batch.values()!;
 
@@ -141,22 +168,59 @@ Deno.test("Batch prepare", async () => {
       values.get("d") as any,
       Method.execute,
     );
-    let p = values.get("i") as Preparor;
-    for (let i = 1; i < 10; i++) {
+    const p = values.get("i") as Preparor;
+    for (let i = 1; i <= 10; i++) {
       batch.method(p, Method.execute, {
-        args: [i, `v${i}`],
+        args: [i, `n${i}`],
       });
     }
+    batch
+      .method(values.get("i3") as any, Method.execute, {
+        args: [3, "name3"],
+      })
+      .method(values.get("i4") as any, Method.execute, {
+        args: [4, "name4"],
+      });
 
-    p = values.get("q8") as Preparor;
-    batch.method(p, Method.allEntries, {
-      name: "q8",
-    });
+    batch
+      .method(values.get("d2") as any, Method.execute, {
+        args: [2, "n10"],
+      })
+      .method(values.get("d1") as any, Method.execute, {
+        args: {
+          id: 2,
+        },
+      })
+      .method(values.get("u5") as any, Method.execute, {
+        args: ["name5", "n5"],
+      });
 
-    const rows = await batch.commit();
+    batch
+      .method(values.get("q2") as any, Method.allEntries, {
+        name: "q2",
+        args: [3],
+      })
+      .method(values.get("q8") as any, Method.allEntries, {
+        name: "q8",
+      });
+
+    await batch.commit();
     values = batch.values()!;
-    console.log(rows);
-    console.log(values);
+    const q2 = values.get("q2") as Array<RowObject>;
+    assertEquals(q2, [
+      { id: 8, name: "n8" },
+      { id: 7, name: "n7" },
+    ]);
+    const q8 = values.get("q8") as Array<RowObject>;
+    assertEquals(q8, [
+      { id: 3, name: "name3" },
+      { id: 4, name: "n4" },
+      { id: 5, name: "name5" },
+      { id: 6, name: "n6" },
+      { id: 7, name: "n7" },
+      { id: 8, name: "n8" },
+      { id: 9, name: "n9" },
+    ]);
   } finally {
     db.close();
   }
