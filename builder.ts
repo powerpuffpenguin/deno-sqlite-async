@@ -5,9 +5,9 @@ import {
   CreatorDeleteArgs,
   CreatorQueryArgs,
   CreatorUpdateArgs,
-  DeleteOptions,
-  QueryOptions,
-  UpdateOptions,
+  DeleteArgs,
+  QueryArgs,
+  UpdateArgs,
 } from "./executor.ts";
 
 export const escapeNames = new Set<string>();
@@ -204,14 +204,14 @@ export class Builder {
     }
     this.sql_ = sql.join("");
   }
-  query(table: string, opts?: QueryOptions) {
+  query(table: string, opts?: QueryArgs) {
     const args = opts?.args;
     if (!Array.isArray(args) || args.length != 0) {
       this.args_ = args;
     }
     this.sql_ = buildQuery(table, opts);
   }
-  update(table: string, values: Record<string, any>, opts?: UpdateOptions) {
+  update(table: string, values: Record<string, any>, opts?: UpdateArgs) {
     const args = new _Parameter(opts?.args);
     const sql = new Array<string>();
     switch (opts?.conflict) {
@@ -264,7 +264,7 @@ export class Builder {
     this.args_ = args.args();
     this.sql_ = sql.join("");
   }
-  delete(table: string, opts?: DeleteOptions) {
+  delete(table: string, opts?: DeleteArgs) {
     const where = opts?.where ?? "";
 
     this.args_ = opts?.args;

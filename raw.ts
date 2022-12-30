@@ -9,9 +9,10 @@ import {
 } from "./sqlite.ts";
 import { Caller } from "./internal/caller.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
-import { ArgsOptions, ContextOptions } from "./options.ts";
 import {
+  ArgsOptions,
   Caller as ICaller,
+  ContextOptions,
   InvokeBatchElement,
   InvokeBatchMethod,
   InvokeOptions,

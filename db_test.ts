@@ -292,3 +292,102 @@ Deno.test("Prepared", async () => {
     db.close();
   }
 });
+Deno.test("DB", async () => {
+  const db = await DB.open();
+  try {
+    await db.execute(createSQL);
+    await db.delete(table);
+    assertEquals(
+      await db.rawInsert(`INSERT INTO ${table} (id, name) VALUES (?, ?)`, {
+        args: [1, "n1"],
+      }),
+      1,
+    );
+    for (let i = 2; i <= 10; i++) {
+      assertEquals(
+        await db.insert(table, {
+          id: i,
+          name: `n${i}`,
+        }),
+        i,
+      );
+    }
+    assertEquals(
+      await db.insert(table, {
+        id: 3,
+        name: "name3",
+      }, {
+        conflict: Conflict.replace,
+      }),
+      3,
+    );
+    assertEquals(
+      await db.insert(table, {
+        id: 4,
+        name: "name4",
+      }, {
+        conflict: Conflict.ignore,
+      }),
+      3, // insert error so LastInsertRowid return 3
+    );
+
+    assertEquals(
+      await db.delete(table, {
+        where: `${columnID} < ? or ${columnName} = ?`,
+        args: [2, "n10"],
+      }),
+      2,
+    );
+    assertEquals(
+      await db.delete(table, {
+        where: `${columnID} = :id`,
+        args: {
+          id: 2,
+        },
+      }),
+      1,
+    );
+
+    assertEquals(
+      await db.update(table, {
+        name: "name5",
+      }, {
+        where: `${columnName} = ?`,
+        args: ["n5"],
+      }),
+      1,
+    );
+
+    assertEquals(
+      await db.queryEntries(table, {
+        distinct: true,
+        columns: [columnID, columnName],
+        where: `${columnID} > ?`,
+        args: [3],
+        limit: 2,
+        offset: 1,
+        orderBy: `${columnID} desc`,
+      }),
+      [
+        { id: 8, name: "n8" },
+        { id: 7, name: "n7" },
+      ],
+    );
+    assertEquals(
+      await db.queryEntries(table, {
+        orderBy: `${columnID}`,
+      }),
+      [
+        { id: 3, name: "name3" },
+        { id: 4, name: "n4" },
+        { id: 5, name: "name5" },
+        { id: 6, name: "n6" },
+        { id: 7, name: "n7" },
+        { id: 8, name: "n8" },
+        { id: 9, name: "n9" },
+      ],
+    );
+  } finally {
+    db.close();
+  }
+});

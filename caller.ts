@@ -36,38 +36,48 @@ export enum Method {
   execute = "execute",
   expandSql = "expandSql",
 }
-export interface InvokeOptions {
+export interface ContextOptions {
+  /**
+   * like golang Context
+   *
+   * @see {@link https://powerpuffpenguin.github.io/ts/easyts/interfaces/context_mod.Context.html}
+   */
   ctx?: Context;
+}
+export interface ArgsOptions extends ContextOptions {
+  /**
+   * Parameters bound to sql
+   */
+  args?: QueryParameterSet;
+}
+export interface InvokeOptions extends ContextOptions {
   req: InvokeRequests;
 }
-export interface InvokePrepare {
-  ctx?: Context;
-
+export interface InvokePrepare extends ContextOptions {
+  /**
+   * SQL command to compile
+   */
   sql: string;
 }
-export interface InvokeExecute {
-  ctx?: Context;
-
-  args?: QueryParameterSet;
+export interface InvokeExecute extends ArgsOptions {
+  /**
+   * SQL command to execute
+   */
   sql: string;
 }
-export interface InvokeQuery {
-  ctx?: Context;
-
-  sql: string;
-  args?: QueryParameterSet;
+export interface InvokeQuery extends InvokeExecute {
+  /**
+   * return result by key-value
+   */
   entries?: false;
 }
-export interface InvokeQueryEntries {
-  ctx?: Context;
-
-  sql: string;
-  args?: QueryParameterSet;
+export interface InvokeQueryEntries extends InvokeExecute {
+  /**
+   * return result by key-value
+   */
   entries: true;
 }
-export interface InvokeBatch {
-  ctx?: Context;
-
+export interface InvokeBatch extends ContextOptions {
   savepoint?: boolean;
   batch: Array<InvokeBatchElement>;
 }

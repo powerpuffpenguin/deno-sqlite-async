@@ -15,7 +15,13 @@ import {
   RawPrepared,
 } from "./raw.ts";
 
-import { InvokeMethod, InvokeOptions, Method, What } from "./caller.ts";
+import {
+  ArgsOptions,
+  InvokeMethod,
+  InvokeOptions,
+  Method,
+  What,
+} from "./caller.ts";
 import {
   BatchArgs,
   BatchCommit,
@@ -38,22 +44,20 @@ import {
   CreatorPrepared,
   CreatorQueryArgs,
   CreatorUpdateArgs,
-  DeleteOptions,
+  DeleteArgs,
   ExecuteArgs,
-  ExecuteOptions,
   Executor,
-  InsertOptions,
+  InsertArgs,
   LockArgs,
   Locker,
   Preparor,
-  QueryOptions,
-  UpdateOptions,
+  QueryArgs,
+  UpdateArgs,
 } from "./executor.ts";
 import { Locked, RW } from "./internal/rw.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
 import { Builder, ColumnVar, PrepareBuilder } from "./builder.ts";
 import { log } from "./log.ts";
-import { ArgsOptions } from "./options.ts";
 
 export interface OpenOptions extends RawOpenOptions {
   /**
@@ -65,6 +69,7 @@ export interface OpenOptions extends RawOpenOptions {
    */
   showSQL?: boolean;
 }
+
 export class _Executor {
   rw: RW;
   constructor(readonly db: RawDB, public showSQL: boolean) {
@@ -372,7 +377,7 @@ export class DB extends SqlPrepare implements Executor {
   close() {
     return this.er_.db.close();
   }
-  execute(sql: string, opts?: ExecuteOptions): Promise<void> {
+  execute(sql: string, opts?: ExecuteArgs): Promise<void> {
     return this.er_.execute(opts?.lock ?? Locker.shared, sql, {
       ctx: opts?.ctx,
       args: opts?.args,
@@ -380,7 +385,7 @@ export class DB extends SqlPrepare implements Executor {
   }
   rawInsert(
     sql: string,
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<number | bigint> {
     return this.er_.insert(
       opts?.lock ?? Locker.shared,
@@ -394,7 +399,7 @@ export class DB extends SqlPrepare implements Executor {
   insert(
     table: string,
     values: Record<string, any>,
-    opts?: InsertOptions,
+    opts?: InsertArgs,
   ): Promise<number | bigint> {
     const builder = new Builder();
     builder.insert(table, values, opts?.conflict);
@@ -407,10 +412,57 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-
+  rawDelete(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
+    return this.er_.changes(
+      opts?.lock ?? Locker.shared,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  delete(table: string, opts?: DeleteArgs): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.delete(table, opts);
+    return this.er_.changes(
+      opts?.lock ?? Locker.shared,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  rawUpdate(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
+    return this.er_.changes(
+      opts?.lock ?? Locker.shared,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  update(
+    table: string,
+    values: Record<string, any>,
+    opts?: UpdateArgs,
+  ): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.update(table, values, opts);
+    return this.er_.changes(
+      opts?.lock ?? Locker.shared,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
   rawQuery(
     sql: string,
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<Row>> {
     return this.er_.query(
       opts?.lock ?? Locker.shared,
@@ -423,7 +475,7 @@ export class DB extends SqlPrepare implements Executor {
   }
   rawQueryEntries(
     sql: string,
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<RowObject>> {
     return this.er_.queryEntries(
       opts?.lock ?? Locker.shared,
@@ -436,7 +488,7 @@ export class DB extends SqlPrepare implements Executor {
   }
   query(
     table: string,
-    opts?: QueryOptions,
+    opts?: QueryArgs,
   ): Promise<Array<Row>> {
     const builder = new Builder();
     builder.query(table, opts);
@@ -451,7 +503,7 @@ export class DB extends SqlPrepare implements Executor {
   }
   queryEntries(
     table: string,
-    opts?: QueryOptions,
+    opts?: QueryArgs,
   ): Promise<Array<RowObject>> {
     const builder = new Builder();
     builder.query(table, opts);
@@ -464,56 +516,15 @@ export class DB extends SqlPrepare implements Executor {
       },
     );
   }
-  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | bigint> {
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  update(
-    table: string,
-    values: Record<string, any>,
-    opts?: UpdateOptions,
-  ): Promise<number | bigint> {
-    const builder = new Builder();
-    builder.update(table, values, opts);
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
-  rawDelete(sql: string, opts?: ExecuteOptions): Promise<number | bigint> {
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  delete(table: string, opts?: DeleteOptions): Promise<number | bigint> {
-    const builder = new Builder();
-    builder.delete(table, opts);
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
+
   batch() {
     return new Batch(this.er_);
+  }
+  batchCommit(
+    batch: BatchExecutor,
+    opts?: BatchCommit,
+  ): Promise<Array<BatchResult>> {
+    return batch.commit(opts);
   }
 }
 

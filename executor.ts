@@ -1,7 +1,6 @@
 // deno-lint-ignore-file no-explicit-any
 import { ColumnVar } from "./builder.ts";
 import { Method } from "./caller.ts";
-import { ContextOptions } from "./options.ts";
 import { ColumnName, QueryParameterSet, Row, RowObject } from "./sqlite.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
 /**
@@ -69,7 +68,7 @@ export interface WhereArgs {
   where?: string;
 }
 
-export interface QueryArgs {
+export interface SelectArgs {
   /**
    * SELECT DISTINCT ...
    */
@@ -138,42 +137,11 @@ export interface LockArgs extends ContextArgs {
 }
 export interface ExecuteArgs extends LockArgs, Args {}
 
-export interface Options extends ContextOptions {
-  lock?: Locker;
-}
-export interface ExecuteOptions extends Options {
-  args?: QueryParameterSet;
-}
-
-export interface InsertOptions extends Options {
-  conflict?: Conflict;
-}
-
-export interface QueryOptions extends ExecuteOptions {
-  distinct?: boolean;
-  columns?: Array<string>;
-  where?: string;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
-}
-
-export interface UpdateOptions extends ExecuteOptions {
-  where?: string;
-  conflict?: Conflict;
-}
-
-export interface DeleteOptions extends ExecuteOptions {
-  where?: string;
-}
-
 export interface CreatorInsertArgs extends ContextArgs, ConflictArgs {}
 export interface CreatorDeleteArgs extends ContextArgs, WhereArgs {}
 export interface CreatorUpdateArgs
   extends ContextArgs, ConflictArgs, WhereArgs {}
-export interface CreatorQueryArgs extends ContextArgs, WhereArgs, QueryArgs {}
+export interface CreatorQueryArgs extends ContextArgs, WhereArgs, SelectArgs {}
 export interface CreatorPrepared {
   /**
    * Create a prepared command that can be reused
@@ -215,6 +183,10 @@ export interface CreatorPrepared {
    */
   prepareQuery(table: string, opts?: CreatorQueryArgs): Promise<Preparor>;
 }
+export interface InsertArgs extends ExecuteArgs, ConflictArgs {}
+export interface DeleteArgs extends ExecuteArgs, WhereArgs {}
+export interface UpdateArgs extends ExecuteArgs, ConflictArgs, WhereArgs {}
+export interface QueryArgs extends ExecuteArgs, WhereArgs, SelectArgs {}
 export interface Executor extends CreatorPrepared {
   /**
    * Execute an SQL query with no return value.
@@ -224,7 +196,7 @@ export interface Executor extends CreatorPrepared {
    *    'CREATE TABLE Test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, num REAL)');
    * ```
    */
-  execute(sql: string, opts?: ExecuteOptions): Promise<void>;
+  execute(sql: string, opts?: ExecuteArgs): Promise<void>;
   /**
    * Executes a raw SQL INSERT query and returns the last inserted row ID.
    * ```
@@ -236,7 +208,7 @@ export interface Executor extends CreatorPrepared {
    */
   rawInsert(
     sql: string,
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<number | bigint>;
   /**
    * This method helps insert a map of [values]
@@ -259,9 +231,32 @@ export interface Executor extends CreatorPrepared {
   insert(
     table: string,
     values: Record<string, any>,
-    opts?: InsertOptions,
+    opts?: InsertArgs,
   ): Promise<number | bigint>;
-
+  /**
+   * Executes a raw SQL DELETE query and returns the
+   * number of changes made.
+   *
+   * ```
+   * const count = await db
+   *   .rawDelete('DELETE FROM Test WHERE name = ?', {args: ['another name']});
+   * ```
+   */
+  rawDelete(sql: string, opts?: ExecuteArgs): Promise<number | bigint>;
+  /**
+   * Convenience method for deleting rows in the database.
+   *
+   * Delete from [table]
+   *
+   * You may include ?s in the where clause, which will be replaced by the
+   * values from [args]
+   *
+   * Returns the number of rows affected.
+   * ```
+   *  const count = await db.delete(tableTodo, {where: 'columnId = ?', args: [id]});
+   * ```
+   */
+  delete(table: string, opts?: DeleteArgs): Promise<number | bigint>;
   /**
    * This is a helper to query a table and return the items found. All optional
    * clauses and filters are formatted as SQL queries
@@ -275,36 +270,6 @@ export interface Executor extends CreatorPrepared {
    *  });
    * ```
    */
-  query(
-    table: string,
-    opts?: QueryOptions,
-  ): Promise<Array<Row>>;
-  /**
-   * @see {@link Executor.query}
-   */
-  queryEntries(
-    table: string,
-    opts?: QueryOptions,
-  ): Promise<Array<RowObject>>;
-  /**
-   * Executes a raw SQL SELECT query and returns a list
-   * of the rows that were found.
-   *
-   * ```
-   * const rows = await database.rawQuery('SELECT * FROM Test');
-   * ```
-   */
-  rawQuery(
-    sql: string,
-    opts?: ExecuteOptions,
-  ): Promise<Array<Row>>;
-  /**
-   * @see {@link Executor.rawQuery}
-   */
-  rawQueryEntries(
-    sql: string,
-    opts?: ExecuteOptions,
-  ): Promise<Array<RowObject>>;
 
   /**
    * Executes a raw SQL UPDATE query and returns
@@ -316,7 +281,7 @@ export interface Executor extends CreatorPrepared {
    *   args: ['updated name', '9876', 'some name']});
    * ```
    */
-  rawUpdate(sql: string, opts?: ExecuteOptions): Promise<number | bigint>;
+  rawUpdate(sql: string, opts?: ExecuteArgs): Promise<number | bigint>;
 
   /**
    * Convenience method for updating rows in the database. Returns
@@ -333,33 +298,39 @@ export interface Executor extends CreatorPrepared {
   update(
     table: string,
     values: Record<string, any>,
-    opts?: UpdateOptions,
+    opts?: UpdateArgs,
   ): Promise<number | bigint>;
 
+  query(
+    table: string,
+    opts?: QueryArgs,
+  ): Promise<Array<Row>>;
   /**
-   * Executes a raw SQL DELETE query and returns the
-   * number of changes made.
+   * @see {@link Executor.query}
+   */
+  queryEntries(
+    table: string,
+    opts?: QueryArgs,
+  ): Promise<Array<RowObject>>;
+  /**
+   * Executes a raw SQL SELECT query and returns a list
+   * of the rows that were found.
    *
    * ```
-   * const count = await db
-   *   .rawDelete('DELETE FROM Test WHERE name = ?', {args: ['another name']});
+   * const rows = await database.rawQuery('SELECT * FROM Test');
    * ```
    */
-  rawDelete(sql: string, opts?: ExecuteOptions): Promise<number | bigint>;
+  rawQuery(
+    sql: string,
+    opts?: ExecuteArgs,
+  ): Promise<Array<Row>>;
   /**
-   * Convenience method for deleting rows in the database.
-   *
-   * Delete from [table]
-   *
-   * You may include ?s in the where clause, which will be replaced by the
-   * values from [args]
-   *
-   * Returns the number of rows affected.
-   * ```
-   *  const count = await db.delete(tableTodo, {where: 'columnId = ?', args: [id]});
-   * ```
+   * @see {@link Executor.rawQuery}
    */
-  delete(table: string, opts?: DeleteOptions): Promise<number | bigint>;
+  rawQueryEntries(
+    sql: string,
+    opts?: ExecuteArgs,
+  ): Promise<Array<RowObject>>;
 
   /**
    * Creates a batch, used for performing multiple operation
@@ -371,6 +342,16 @@ export interface Executor extends CreatorPrepared {
    * when the transaction is done
    */
   batch(): BatchExecutor;
+
+  /**
+   * Submit the contents of the batch to the system for processing
+   *
+   * You need to call this function instead of calling batch.commit in the transaction
+   */
+  batchCommit(
+    batch: BatchExecutor,
+    opts?: BatchCommit,
+  ): Promise<Array<BatchResult>>;
 }
 
 export interface Preparor {
@@ -470,7 +451,7 @@ export type BatchValue =
   | number
   | bigint;
 
-export interface BatchCommit extends Options {
+export interface BatchCommit extends LockArgs {
   /**
    * If true execute the command in SAVEPOINT
    *
@@ -496,13 +477,13 @@ export interface BatchExecuteArgs extends BatchArgs {
 export interface BatchInsertArgs extends BatchNameArgs, ConflictArgs {}
 export interface BatchDeleteArgs extends BatchArgs, WhereArgs {}
 export interface BatchUpdateArgs extends BatchArgs, ConflictArgs, WhereArgs {}
-export interface BatchQueryArgs extends BatchArgs, QueryArgs, WhereArgs {}
+export interface BatchQueryArgs extends BatchArgs, SelectArgs, WhereArgs {}
 export interface BatchPrepareInsertArgs extends BatchNameArgs, ConflictArgs {}
 export interface BatchPrepareDeleteArgs extends BatchNameArgs, WhereArgs {}
 export interface BatchPrepareUpdateArgs
   extends BatchNameArgs, WhereArgs, ConflictArgs {}
 export interface BatchPrepareQueryArgs
-  extends BatchNameArgs, QueryArgs, WhereArgs {}
+  extends BatchNameArgs, SelectArgs, WhereArgs {}
 /**
  * Execute a set of sql commands in batches, which is faster than executing each command individually
  */
