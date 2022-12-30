@@ -137,10 +137,6 @@ Deno.test("Batch prepare", async () => {
         where: `${columnID} = :id`,
       })
       .prepareUpdate(table, [columnName], {
-        name: "u3",
-        where: `${columnName} = ?`,
-      })
-      .prepareUpdate(table, [columnName], {
         name: "u5",
         where: `${columnName} = ?`,
       });
@@ -212,6 +208,77 @@ Deno.test("Batch prepare", async () => {
       { id: 7, name: "n7" },
     ]);
     const q8 = values.get("q8") as Array<RowObject>;
+    assertEquals(q8, [
+      { id: 3, name: "name3" },
+      { id: 4, name: "n4" },
+      { id: 5, name: "name5" },
+      { id: 6, name: "n6" },
+      { id: 7, name: "n7" },
+      { id: 8, name: "n8" },
+      { id: 9, name: "n9" },
+    ]);
+  } finally {
+    db.close();
+  }
+});
+Deno.test("Prepared", async () => {
+  const db = await DB.open();
+  try {
+    await (await db.prepare(createSQL)).execute();
+    await (await db.prepareDelete(table)).execute();
+    const p = await db.prepareInsert(table, [columnID, columnName]);
+    for (let i = 1; i < 10; i++) {
+      await p.execute({
+        args: [i, `n${i}`],
+      });
+    }
+    await (await db.prepareInsert(table, [columnID, columnName], {
+      conflict: Conflict.replace,
+    })).execute({
+      args: [3, "name3"],
+    });
+    await (await db.prepareInsert(table, [columnID, columnName], {
+      conflict: Conflict.ignore,
+    })).execute({
+      args: [4, "name4"],
+    });
+    await (await db.prepareDelete(table, {
+      where: `${columnID} < ? or ${columnName} = ?`,
+    })).execute({
+      args: [2, "n10"],
+    });
+    await (await db.prepareDelete(table, {
+      where: `${columnID} = :id`,
+    })).execute({
+      args: {
+        id: 2,
+      },
+    });
+
+    await (await db.prepareUpdate(table, [columnName], {
+      where: `${columnName} = ?`,
+    })).execute({
+      args: ["name5", "n5"],
+    });
+
+    const q2 = await (await db.prepareQuery(table, {
+      distinct: true,
+      columns: [columnID, columnName],
+      where: `${columnID} > ?`,
+      limit: 2,
+      offset: 1,
+      orderBy: `${columnID} desc`,
+    })).allEntries({
+      args: [3],
+    });
+    const q8 = await (await db.prepareQuery(table, {
+      orderBy: `${columnID}`,
+    })).allEntries();
+
+    assertEquals(q2, [
+      { id: 8, name: "n8" },
+      { id: 7, name: "n7" },
+    ]);
     assertEquals(q8, [
       { id: 3, name: "name3" },
       { id: 4, name: "n4" },

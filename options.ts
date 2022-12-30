@@ -1,15 +1,16 @@
 import { Context } from "./deps/easyts/context/mod.ts";
 import { QueryParameterSet } from "./sqlite.ts";
 export interface ContextOptions {
+  /**
+   * like golang Context
+   *
+   * @see {@link https://powerpuffpenguin.github.io/ts/easyts/interfaces/context_mod.Context.html}
+   */
   ctx?: Context;
 }
 export interface ArgsOptions extends ContextOptions {
-  args?: QueryParameterSet;
-}
-export interface BatchOptions extends ContextOptions {
-  ctx?: Context;
   /**
-   * Execute in SAVEPOINT if set to true
+   * Parameters bound to sql
    */
-  savepoint?: boolean;
+  args?: QueryParameterSet;
 }

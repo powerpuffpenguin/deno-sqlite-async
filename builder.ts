@@ -2,10 +2,10 @@
 import { QueryParameter, QueryParameterSet, SqliteError } from "./sqlite.ts";
 import {
   Conflict,
+  CreatorDeleteArgs,
+  CreatorQueryArgs,
+  CreatorUpdateArgs,
   DeleteOptions,
-  PrepareDeleteOptions,
-  PrepareQueryOptions,
-  PrepareUpdateOptions,
   QueryOptions,
   UpdateOptions,
 } from "./executor.ts";
@@ -74,7 +74,7 @@ export function escapeName(name: string): string {
   }
   return name;
 }
-function buildQuery(table: string, opts?: PrepareQueryOptions): string {
+function buildQuery(table: string, opts?: CreatorQueryArgs): string {
   const groupBy = opts?.groupBy ?? "";
   const having = opts?.having ?? "";
   if (groupBy === "" && having !== "") {
@@ -422,13 +422,13 @@ export class PrepareBuilder {
 
     this.sql_ = sql.join("");
   }
-  query(table: string, opts?: PrepareQueryOptions) {
+  query(table: string, opts?: CreatorQueryArgs) {
     this.sql_ = buildQuery(table, opts);
   }
   update(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
-    opts?: PrepareUpdateOptions,
+    opts?: CreatorUpdateArgs,
   ) {
     const len = columns.length;
     if (len == 0) {
@@ -493,7 +493,7 @@ export class PrepareBuilder {
 
     this.sql_ = sql.join("");
   }
-  delete(table: string, opts?: PrepareDeleteOptions) {
+  delete(table: string, opts?: CreatorDeleteArgs) {
     const where = opts?.where ?? "";
 
     this.sql_ = where == ""

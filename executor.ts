@@ -3,6 +3,7 @@ import { ColumnVar } from "./builder.ts";
 import { Method } from "./caller.ts";
 import { ContextOptions } from "./options.ts";
 import { ColumnName, QueryParameterSet, Row, RowObject } from "./sqlite.ts";
+import { Context } from "./deps/easyts/context/mod.ts";
 /**
  * Insert/Update conflict resolver
  */
@@ -67,23 +68,50 @@ export interface WhereArgs {
    */
   where?: string;
 }
+
+export interface QueryArgs {
+  /**
+   * SELECT DISTINCT ...
+   */
+  distinct?: boolean;
+  /**
+   * SELECT columns or SELECT *
+   */
+  columns?: Array<string>;
+  /**
+   * sql GROUP BY section
+   */
+  groupBy?: string;
+  /**
+   * sql HAVING section
+   */
+  having?: string;
+  /**
+   * sql ORDER BY section
+   */
+  orderBy?: string;
+  /**
+   * sql LIMIT section
+   */
+  limit?: number;
+  /**
+   * sql OFFSET section
+   */
+  offset?: number | bigint;
+}
 export interface Args {
   /**
    * Parameters bound to sql
    */
   args?: QueryParameterSet;
 }
-export interface QueryArgs extends Args, WhereArgs {
-  distinct?: boolean;
+export interface ContextArgs {
   /**
-   * SELECT columns or SELECT *
+   * like golang Context
+   *
+   * @see {@link https://powerpuffpenguin.github.io/ts/easyts/interfaces/context_mod.Context.html}
    */
-  columns?: Array<string>;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
+  ctx?: Context;
 }
 /**
  * The sqlite provided by WebAssembly cannot correctly acquire the file lock, but you can use the lock inside the process, which can ensure that the current process uses sqlite correctly
@@ -102,6 +130,13 @@ export enum Locker {
    */
   exclusive,
 }
+export interface LockArgs extends ContextArgs {
+  /**
+   * How to lock
+   */
+  lock?: Locker;
+}
+export interface ExecuteArgs extends LockArgs, Args {}
 
 export interface Options extends ContextOptions {
   lock?: Locker;
@@ -113,21 +148,8 @@ export interface ExecuteOptions extends Options {
 export interface InsertOptions extends Options {
   conflict?: Conflict;
 }
-export interface PrepareInsertOptions extends ContextOptions {
-  conflict?: Conflict;
-}
 
 export interface QueryOptions extends ExecuteOptions {
-  distinct?: boolean;
-  columns?: Array<string>;
-  where?: string;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
-}
-export interface PrepareQueryOptions extends ContextOptions {
   distinct?: boolean;
   columns?: Array<string>;
   where?: string;
@@ -142,19 +164,58 @@ export interface UpdateOptions extends ExecuteOptions {
   where?: string;
   conflict?: Conflict;
 }
-export interface PrepareUpdateOptions extends ContextOptions {
-  where?: string;
-  conflict?: Conflict;
-}
 
 export interface DeleteOptions extends ExecuteOptions {
   where?: string;
 }
-export interface PrepareDeleteOptions extends ContextOptions {
-  where?: string;
-}
 
-export interface Executor {
+export interface CreatorInsertArgs extends ContextArgs, ConflictArgs {}
+export interface CreatorDeleteArgs extends ContextArgs, WhereArgs {}
+export interface CreatorUpdateArgs
+  extends ContextArgs, ConflictArgs, WhereArgs {}
+export interface CreatorQueryArgs extends ContextArgs, WhereArgs, QueryArgs {}
+export interface CreatorPrepared {
+  /**
+   * Create a prepared command that can be reused
+   */
+  prepare(sql: string, opts?: ContextArgs): Promise<Preparor>;
+  /**
+   * pre-built commands "SELECT changes()"
+   */
+  prepareChanges(): Preparor;
+  /**
+   * pre-built commands "SELECT last_insert_rowid()"
+   */
+  prepareLastInsertRowid(): Preparor;
+  /**
+   * Like the "prepare" function, but easier to create "INSERT" commands
+   */
+  prepareInsert(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: CreatorInsertArgs,
+  ): Promise<Preparor>;
+  /**
+   * Like the "prepare" function, but easier to create "DELETE" commands
+   */
+  prepareDelete(
+    table: string,
+    opts?: CreatorDeleteArgs,
+  ): Promise<Preparor>;
+  /**
+   * Like the "prepare" function, but easier to create "UPDATE" commands
+   */
+  prepareUpdate(
+    table: string,
+    columns: Array<string> | Array<ColumnVar>,
+    opts?: CreatorUpdateArgs,
+  ): Promise<Preparor>;
+  /**
+   * Like the "prepare" function, but easier to create "SELECT" commands
+   */
+  prepareQuery(table: string, opts?: CreatorQueryArgs): Promise<Preparor>;
+}
+export interface Executor extends CreatorPrepared {
   /**
    * Execute an SQL query with no return value.
    *
@@ -300,25 +361,6 @@ export interface Executor {
    */
   delete(table: string, opts?: DeleteOptions): Promise<number | bigint>;
 
-  prepare(sql: string, opts?: ContextOptions): Promise<Preparor>;
-  prepareChanges(): Preparor;
-  prepareLastInsertRowid(): Preparor;
-  prepareInsert(
-    table: string,
-    columns: Array<string> | Array<ColumnVar>,
-    opts?: PrepareInsertOptions,
-  ): Promise<Preparor>;
-  prepareQuery(table: string, opts?: PrepareQueryOptions): Promise<Preparor>;
-  prepareUpdate(
-    table: string,
-    columns: Array<string> | Array<ColumnVar>,
-    opts?: PrepareUpdateOptions,
-  ): Promise<Preparor>;
-  prepareDelete(
-    table: string,
-    opts?: PrepareDeleteOptions,
-  ): Promise<Preparor>;
-
   /**
    * Creates a batch, used for performing multiple operation
    * in a single atomic operation.
@@ -345,22 +387,59 @@ export interface Preparor {
    * Whether the resource has been closed
    */
   get isClosed(): boolean;
-  columns(opts?: Options): Promise<Array<ColumnName>>;
-  first(opts?: ExecuteOptions): Promise<Row | undefined>;
+  /**
+   * Returns the column names for this query.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.columns}
+   */
+  columns(opts?: LockArgs): Promise<Array<ColumnName>>;
+  /**
+   * Binds the given parameters to the query and returns the first resulting row or undefined when there are no rows returned by the query.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.first}
+   */
+  first(opts?: ExecuteArgs): Promise<Row | undefined>;
+  /**
+   * Like first except the row is returned as an object containing key-value pairs.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.firstEntry}
+   */
   firstEntry(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<RowObject | undefined>;
+  /**
+   * Binds the given parameters to the query and returns an array containing all resulting rows.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.all}
+   */
   all(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<Row>>;
+  /**
+   * Like all except each row is returned as an object containing key-value pairs.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.allEntries}
+   */
   allEntries(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<RowObject>>;
+  /**
+   * Binds the given parameters to the query and executes the query, ignoring any rows which might be returned.
+   *
+   * Using this method is more efficient when the rows returned by a query are not needed or the query does not return any rows.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.execute}
+   */
   execute(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<void>;
+  /**
+   * Returns the SQL string used to construct this query, substituting placeholders (e.g. ?) with their values supplied in params.
+   *
+   * @see {@link https://deno.land/x/sqlite/mod.ts?s=PreparedQuery&p=prototype.expandSql}
+   */
   expandSql(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<string>;
 }
 
@@ -417,20 +496,13 @@ export interface BatchExecuteArgs extends BatchArgs {
 export interface BatchInsertArgs extends BatchNameArgs, ConflictArgs {}
 export interface BatchDeleteArgs extends BatchArgs, WhereArgs {}
 export interface BatchUpdateArgs extends BatchArgs, ConflictArgs, WhereArgs {}
-export interface BatchQueryArgs extends BatchNameArgs, QueryArgs {}
+export interface BatchQueryArgs extends BatchArgs, QueryArgs, WhereArgs {}
 export interface BatchPrepareInsertArgs extends BatchNameArgs, ConflictArgs {}
 export interface BatchPrepareDeleteArgs extends BatchNameArgs, WhereArgs {}
 export interface BatchPrepareUpdateArgs
   extends BatchNameArgs, WhereArgs, ConflictArgs {}
-export interface BatchPrepareQueryArgs extends BatchNameArgs, WhereArgs {
-  distinct?: boolean;
-  columns?: Array<string>;
-  groupBy?: string;
-  having?: string;
-  orderBy?: string;
-  limit?: number;
-  offset?: number | bigint;
-}
+export interface BatchPrepareQueryArgs
+  extends BatchNameArgs, QueryArgs, WhereArgs {}
 /**
  * Execute a set of sql commands in batches, which is faster than executing each command individually
  */

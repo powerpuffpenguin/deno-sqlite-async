@@ -15,7 +15,7 @@ import {
   RawPrepared,
 } from "./raw.ts";
 
-import { InvokeOptions, Method, What } from "./caller.ts";
+import { InvokeMethod, InvokeOptions, Method, What } from "./caller.ts";
 import {
   BatchArgs,
   BatchCommit,
@@ -32,16 +32,19 @@ import {
   BatchResult,
   BatchUpdateArgs,
   BatchValue,
+  ContextArgs,
+  CreatorDeleteArgs,
+  CreatorInsertArgs,
+  CreatorPrepared,
+  CreatorQueryArgs,
+  CreatorUpdateArgs,
   DeleteOptions,
+  ExecuteArgs,
   ExecuteOptions,
   Executor,
   InsertOptions,
+  LockArgs,
   Locker,
-  Options,
-  PrepareDeleteOptions,
-  PrepareInsertOptions,
-  PrepareQueryOptions,
-  PrepareUpdateOptions,
   Preparor,
   QueryOptions,
   UpdateOptions,
@@ -50,7 +53,7 @@ import { Locked, RW } from "./internal/rw.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
 import { Builder, ColumnVar, PrepareBuilder } from "./builder.ts";
 import { log } from "./log.ts";
-import { ArgsOptions, ContextOptions } from "./options.ts";
+import { ArgsOptions } from "./options.ts";
 
 export interface OpenOptions extends RawOpenOptions {
   /**
@@ -99,11 +102,19 @@ export class _Executor {
         return this.rw.lock(ctx);
     }
   }
-  private _log(at: number | undefined, sql: string, args?: QueryParameterSet) {
+  private _log(
+    at: number | undefined,
+    sql: string,
+    args?: QueryParameterSet,
+    method?: Method,
+  ) {
     if (at === undefined) {
       return;
     }
     const used = Date.now() - at;
+    if (method !== undefined) {
+      sql = `${method}: ${sql}`;
+    }
     if (args === undefined) {
       log.log(sql, "--", `${used}ms`);
     } else {
@@ -208,7 +219,7 @@ export class _Executor {
       this._log(at, sql, opts?.args);
     }
   }
-  async prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
+  async prepare(sql: string, opts?: ContextArgs): Promise<Prepared> {
     const prepare = await this.db.prepare(sql, opts);
     return new Prepared(this, prepare);
   }
@@ -226,6 +237,7 @@ export class _Executor {
     sqls: Array<{
       sql: string;
       args?: QueryParameterSet;
+      method?: Method;
     }>,
   ): Promise<Array<RawBatchResult>> {
     const at = this.showSQL ? Date.now() : undefined;
@@ -236,21 +248,43 @@ export class _Executor {
       locked?.unlock();
       if (at !== undefined) {
         const used = Date.now() - at;
-        for (const { sql, args } of sqls) {
+        for (const { sql, args, method } of sqls) {
+          const prefix = method === undefined ? "batch:" : `batch-${method}:`;
           if (args === undefined) {
-            log.log("batch:", sql);
+            log.log(prefix, sql);
           } else {
-            log.log("batch:", sql, " --", args);
+            log.log(prefix, sql, " --", args);
           }
         }
         log.log("batch used:", `${used}ms`);
       }
     }
   }
+  async method(lock: Locker, opts: InvokeMethod, sql?: string) {
+    const at = this.showSQL && sql !== undefined ? Date.now() : undefined;
+    const locked = await this._locked(lock, opts.ctx);
+    try {
+      return await this.db.invoke({
+        ctx: opts.ctx,
+        req: {
+          what: What.method,
+          sql: opts.sql,
+          args: opts.args,
+          method: opts.method,
+          result: opts.result,
+        },
+      });
+    } finally {
+      locked?.unlock();
+      if (at !== undefined) {
+        this._log(at, sql!, opts?.args, opts.method);
+      }
+    }
+  }
 }
-export class SqlPrepare {
+export class SqlPrepare implements CreatorPrepared {
   constructor(protected readonly er_: _Executor) {}
-  prepare(sql: string, opts?: ContextOptions): Promise<Prepared> {
+  prepare(sql: string, opts?: ContextArgs): Promise<Prepared> {
     return this.er_.prepare(sql, opts);
   }
   prepareChanges(): Prepared {
@@ -264,32 +298,32 @@ export class SqlPrepare {
   prepareInsert(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
-    opts?: PrepareInsertOptions,
+    opts?: CreatorInsertArgs,
   ) {
     const builder = new PrepareBuilder();
     builder.insert(table, columns, opts?.conflict);
     return this.er_.prepare(builder.sql(), opts);
   }
-  prepareQuery(table: string, opts?: PrepareQueryOptions) {
+  prepareDelete(
+    table: string,
+    opts?: CreatorDeleteArgs,
+  ) {
     const builder = new PrepareBuilder();
-    builder.query(table, opts);
+    builder.delete(table, opts);
     return this.er_.prepare(builder.sql(), opts);
   }
   prepareUpdate(
     table: string,
     columns: Array<string> | Array<ColumnVar>,
-    opts?: PrepareUpdateOptions,
+    opts?: CreatorUpdateArgs,
   ) {
     const builder = new PrepareBuilder();
     builder.update(table, columns, opts);
     return this.er_.prepare(builder.sql(), opts);
   }
-  prepareDelete(
-    table: string,
-    opts?: PrepareDeleteOptions,
-  ) {
+  prepareQuery(table: string, opts?: CreatorQueryArgs) {
     const builder = new PrepareBuilder();
-    builder.delete(table, opts);
+    builder.query(table, opts);
     return this.er_.prepare(builder.sql(), opts);
   }
 }
@@ -511,124 +545,103 @@ export class Prepared implements Preparor {
   get isClosed(): boolean {
     return this.closed_ || this.prepared_.isClosed;
   }
-  columns(opts?: Options): Promise<Array<ColumnName>> {
+  columns(opts?: LockArgs): Promise<Array<ColumnName>> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.none, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.columns,
-        result: true,
-      },
+      sql: prepare.id,
+      method: Method.columns,
+      result: true,
     });
   }
-  first(opts?: ExecuteOptions): Promise<Row | undefined> {
+  first(opts?: ExecuteArgs): Promise<Row | undefined> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.first,
-        args: opts?.args,
-        result: true,
-      },
-    });
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.first,
+      result: true,
+    }, this.sql);
   }
   firstEntry(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<RowObject | undefined> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.firstEntry,
-        args: opts?.args,
-        result: true,
-      },
-    });
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.firstEntry,
+      result: true,
+    }, this.sql);
   }
   all(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<Row>> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.all,
-        args: opts?.args,
-        result: true,
-      },
-    });
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.all,
+      result: true,
+    }, this.sql);
   }
   allEntries(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<Array<RowObject>> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.allEntries,
-        args: opts?.args,
-        result: true,
-      },
-    });
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.allEntries,
+      result: true,
+    }, this.sql);
   }
   execute(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<undefined> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.execute,
-        args: opts?.args,
-      },
-    });
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.execute,
+    }, this.sql);
   }
   expandSql(
-    opts?: ExecuteOptions,
+    opts?: ExecuteArgs,
   ): Promise<string> {
     const prepare = this.prepared_;
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.invoke(opts?.lock ?? Locker.shared, {
+    return this.er_.method(opts?.lock ?? Locker.none, {
       ctx: opts?.ctx,
-      req: {
-        what: What.method,
-        sql: prepare.id,
-        method: Method.expandSql,
-        args: opts?.args,
-        result: true,
-      },
+      sql: prepare.id,
+      args: opts?.args,
+      method: Method.expandSql,
+      result: true,
     });
   }
 }
@@ -639,10 +652,12 @@ export class Batch implements BatchExecutor {
   private i_ = 0;
   private batch_ = new Array<RawBatch>();
   private keys_?: Map<number, string>;
+  private names_?: Set<string>;
   private values_?: Map<string, BatchValue>;
   private sqls_ = new Array<{
     sql: string;
     args?: QueryParameterSet;
+    method?: Method;
   }>();
   constructor(private er_: _Executor) {}
   private lock_ = Locker.none;
@@ -700,11 +715,21 @@ export class Batch implements BatchExecutor {
     if (name !== undefined && name !== null) {
       let keys = this.keys_;
       if (keys) {
+        const names = this.names_!;
+        if (names.has(name)) {
+          throw new SqliteError(`name already exists: ${names}`);
+        }
         keys.set(this.i_, name);
+        names.add(name);
       } else {
         keys = new Map<number, string>();
         keys.set(this.i_, name);
+
+        const names = new Set<string>();
+        names.add(name);
+
         this.keys_ = keys;
+        this.names_ = names;
       }
     }
   }
@@ -992,6 +1017,7 @@ export class Batch implements BatchExecutor {
         this.sqls_.push({
           sql: preparor.sql,
           args: opts?.args,
+          method: method,
         });
         break;
     }

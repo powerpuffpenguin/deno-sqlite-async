@@ -9,7 +9,7 @@ import {
 } from "./sqlite.ts";
 import { Caller } from "./internal/caller.ts";
 import { Context } from "./deps/easyts/context/mod.ts";
-import { ArgsOptions, BatchOptions, ContextOptions } from "./options.ts";
+import { ArgsOptions, ContextOptions } from "./options.ts";
 import {
   Caller as ICaller,
   InvokeBatchElement,
@@ -376,7 +376,7 @@ export class RawPrepared {
       result: true,
     });
   }
-  async batch(methods: Array<InvokeBatchMethod>, opts?: BatchOptions) {
+  async batch(methods: Array<InvokeBatchMethod>, opts?: RawBatchOptions) {
     const id = this.id_;
     if (id == undefined) {
       throw new SqliteError(`Prepared(${this.id}) already closed`);
