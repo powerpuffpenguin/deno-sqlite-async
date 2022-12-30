@@ -4,7 +4,7 @@ import {
   selectChan,
   WriteChannel,
 } from "../deps/easyts/mod.ts";
-import { background, Context } from "../deps/easyts/context/mod.ts";
+import { Context } from "../deps/easyts/context/mod.ts";
 export const errClosed = new Error("RW already closed");
 export class RW {
   private wl_ = new Chan<number>();
@@ -108,17 +108,17 @@ export class RW {
     }
   }
   async lock(ctx?: Context): Promise<Locked> {
-    await this._send(ctx ?? background(), this.wl_);
+    await this._send(ctx, this.wl_);
     return new _Locked(this);
   }
-  unlock(ctx: Context) {
+  unlock(ctx?: Context) {
     return this._send(ctx, this.wu_);
   }
   async readLock(ctx?: Context): Promise<Locked> {
     await this._send(ctx, this.rl_);
     return new _Locked(this, true);
   }
-  readUnlock(ctx: Context) {
+  readUnlock(ctx?: Context) {
     return this._send(ctx, this.ru_);
   }
 }
@@ -139,9 +139,9 @@ class _Locked {
   async _unlock() {
     try {
       if (this.read) {
-        await this.rw.readUnlock(background());
+        await this.rw.readUnlock();
       } else {
-        await this.rw.unlock(background());
+        await this.rw.unlock();
       }
     } catch (_) { //
     }

@@ -342,16 +342,6 @@ export interface Executor extends CreatorPrepared {
    * when the transaction is done
    */
   batch(): BatchExecutor;
-
-  /**
-   * Submit the contents of the batch to the system for processing
-   *
-   * You need to call this function instead of calling batch.commit in the transaction
-   */
-  batchCommit(
-    batch: BatchExecutor,
-    opts?: BatchCommit,
-  ): Promise<Array<BatchResult>>;
 }
 
 export interface Preparor {
@@ -624,4 +614,9 @@ export interface BatchExecutor {
     method: Method,
     opts?: BatchArgs,
   ): BatchExecutor;
+}
+export interface TransactionArgs extends LockArgs {
+  type?: "DEFERRED" | "IMMEDIATE" | "EXCLUSIVE";
+}
+export interface Transaction {
 }

@@ -52,6 +52,8 @@ import {
   Locker,
   Preparor,
   QueryArgs,
+  Transaction,
+  TransactionArgs,
   UpdateArgs,
 } from "./executor.ts";
 import { Locked, RW } from "./internal/rw.ts";
@@ -68,6 +70,35 @@ export interface OpenOptions extends RawOpenOptions {
    * Display the executed sql statement
    */
   showSQL?: boolean;
+
+  /**
+   * Callback when the database is first created
+   * @param txn Transaction
+   * @param version database current version
+   */
+  onCreate?: (txn: Transaction, version: number) => void | Promise<void>;
+  /**
+   * Callback when the current version is higher than the version recorded in the database
+   * @param txn Transaction
+   * @param oldVersion version of the record in the database
+   * @param newVersion database current version
+   */
+  onUpgrade?: (
+    txn: Transaction,
+    oldVersion: number,
+    newVersion: number,
+  ) => void | Promise<void>;
+  /**
+   * Callback when the current version is lower than the version recorded in the database
+   * @param txn Transaction
+   * @param oldVersion version of the record in the database
+   * @param newVersion database current version
+   */
+  onDowngrade?: (
+    txn: Transaction,
+    oldVersion: number,
+    newVersion: number,
+  ) => void | Promise<void>;
 }
 
 export class _Executor {
@@ -520,11 +551,21 @@ export class DB extends SqlPrepare implements Executor {
   batch() {
     return new Batch(this.er_);
   }
-  batchCommit(
-    batch: BatchExecutor,
-    opts?: BatchCommit,
-  ): Promise<Array<BatchResult>> {
-    return batch.commit(opts);
+  async transaction<T>(
+    action: (txn: Transaction) => Promise<T>,
+    opts?: TransactionArgs,
+  ): Promise<T> {
+    const txn = new _Transaction(this.er_);
+    await txn._init(opts);
+    let resp: T;
+    try {
+      resp = await action(txn);
+    } catch (e) {
+      await txn._rollback();
+      throw e;
+    }
+    await txn._commit();
+    return resp;
   }
 }
 
@@ -1039,4 +1080,123 @@ export class Batch implements BatchExecutor {
 
     return this;
   }
+}
+export class _Transaction extends SqlPrepare {
+  constructor(er_: _Executor) {
+    super(er_);
+  }
+  private lock_ = Locker.none;
+  private locked_?: Locked;
+  private begin_ = false;
+  async _read(ctx?: Context) {
+    if (this.lock_ == Locker.none) {
+      this.locked_ = await this.er_.rw.readLock(ctx);
+      this.lock_ = Locker.shared;
+    }
+  }
+  async _write(ctx?: Context) {
+    if (this.lock_ == Locker.none) {
+      this.locked_ = await this.er_.rw.lock(ctx);
+      this.lock_ = Locker.exclusive;
+    } else if (this.lock_ == Locker.shared) {
+      const locked = this.locked_!;
+      this.locked_ = undefined;
+      this.lock_ = Locker.none;
+      locked.unlock();
+
+      this.locked_ = await this.er_.rw.lock(ctx);
+      this.lock_ = Locker.exclusive;
+    }
+
+    if (this.begin_) {
+      return;
+    }
+    await this.er_.invoke(Locker.none, {
+      ctx: ctx,
+      req: {
+        what: What.execute,
+        sql: "BEGIN DEFERRED",
+      },
+    });
+    this.begin_ = true;
+  }
+  async _rollback() {
+    const er = this.er_;
+    if (this.begin_) {
+      try {
+        await er.execute(Locker.none, "ROLLBACK");
+      } catch (_) { //
+      } finally {
+        this.locked_?.unlock();
+      }
+      return;
+    }
+    if (er.showSQL) {
+      log.log("ROLLBACK -- 0ms");
+    }
+    this.locked_?.unlock();
+  }
+  async _commit() {
+    const er = this.er_;
+    if (this.begin_) {
+      try {
+        await er.execute(Locker.none, "COMMIT");
+      } finally {
+        this.locked_?.unlock();
+      }
+      return;
+    }
+    if (er.showSQL) {
+      log.log("COMMIT -- 0ms");
+    }
+    this.locked_?.unlock();
+  }
+  async _init(opts?: TransactionArgs) {
+    let lock = opts?.lock ?? Locker.none;
+    switch (opts?.type) {
+      case "IMMEDIATE":
+      case "EXCLUSIVE":
+        lock = Locker.exclusive;
+        break;
+    }
+
+    const er = this.er_;
+    const rw = er.rw;
+    let locked: undefined | Locked;
+    switch (lock) {
+      case Locker.exclusive:
+        locked = await rw.lock(opts?.ctx);
+        break;
+      case Locker.shared:
+        locked = await rw.readLock(opts?.ctx);
+        break;
+    }
+
+    switch (opts?.type) {
+      case "IMMEDIATE":
+      case "EXCLUSIVE":
+        try {
+          await er.execute(Locker.none, `BEGIN ${opts.type}`);
+          this.begin_ = true;
+        } catch (e) {
+          locked!.unlock();
+          throw e;
+        }
+        break;
+      default:
+        if (er.showSQL) {
+          if (opts?.type) {
+            log.log("BEGIN DEFERRED -- 0ms");
+          } else {
+            log.log("BEGIN -- 0ms");
+          }
+        }
+        break;
+    }
+    this.lock_ = lock;
+    this.locked_ = locked;
+  }
+}
+export function isTransaction(t: any): t is Transaction {
+  return t instanceof _Transaction;
 }
