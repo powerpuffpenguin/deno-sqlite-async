@@ -76,7 +76,7 @@ export interface OpenOptions extends RawOpenOptions {
    * @param txn Transaction
    * @param version database current version
    */
-  onCreate?: (txn: Transaction, version: number) => void | Promise<void>;
+  onCreate?: (txn: SqlTransaction, version: number) => void | Promise<void>;
   /**
    * Callback when the current version is higher than the version recorded in the database
    * @param txn Transaction
@@ -84,7 +84,7 @@ export interface OpenOptions extends RawOpenOptions {
    * @param newVersion database current version
    */
   onUpgrade?: (
-    txn: Transaction,
+    txn: SqlTransaction,
     oldVersion: number,
     newVersion: number,
   ) => void | Promise<void>;
@@ -95,7 +95,7 @@ export interface OpenOptions extends RawOpenOptions {
    * @param newVersion database current version
    */
   onDowngrade?: (
-    txn: Transaction,
+    txn: SqlTransaction,
     oldVersion: number,
     newVersion: number,
   ) => void | Promise<void>;
@@ -318,8 +318,28 @@ export class _Executor {
     }
   }
 }
-export class SqlPrepare implements CreatorPrepared {
-  constructor(protected readonly er_: _Executor) {}
+function lockDB(
+  _?: Context,
+  locker?: Locker,
+  write?: boolean,
+) {
+  if (write) {
+    return locker === Locker.exclusive ? Locker.exclusive : Locker.shared;
+  }
+  return locker ?? Locker.none;
+}
+type LockerFunc = (
+  ctx?: Context,
+  locker?: Locker,
+  write?: boolean,
+  read?: boolean,
+) => Locker | Promise<Locker>;
+class SqlExecutor implements CreatorPrepared, Executor {
+  constructor(
+    protected readonly er_: _Executor,
+    readonly lock_: LockerFunc,
+    readonly root?: boolean,
+  ) {}
   prepare(sql: string, opts?: ContextArgs): Promise<Prepared> {
     return this.er_.prepare(sql, opts);
   }
@@ -362,8 +382,203 @@ export class SqlPrepare implements CreatorPrepared {
     builder.query(table, opts);
     return this.er_.prepare(builder.sql(), opts);
   }
+
+  async execute(sql: string, opts?: ExecuteArgs): Promise<void> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.execute(lock, sql, {
+      ctx: opts?.ctx,
+      args: opts?.args,
+    });
+  }
+  async rawInsert(
+    sql: string,
+    opts?: ExecuteArgs,
+  ): Promise<number | bigint> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.insert(
+      lock,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  async insert(
+    table: string,
+    values: Record<string, any>,
+    opts?: InsertArgs,
+  ): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.insert(table, values, opts?.conflict);
+
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.insert(
+      lock,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  async rawDelete(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.changes(
+      lock,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  async delete(table: string, opts?: DeleteArgs): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.delete(table, opts);
+
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.changes(
+      lock,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  async rawUpdate(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.changes(
+      lock,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  async update(
+    table: string,
+    values: Record<string, any>,
+    opts?: UpdateArgs,
+  ): Promise<number | bigint> {
+    const builder = new Builder();
+    builder.update(table, values, opts);
+
+    const lock = await this.lock_(opts?.ctx, opts?.lock, true);
+    return this.er_.changes(
+      lock,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  async rawQuery(
+    sql: string,
+    opts?: ExecuteArgs,
+  ): Promise<Array<Row>> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, undefined, true);
+    return this.er_.query(
+      lock,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  async rawQueryEntries(
+    sql: string,
+    opts?: ExecuteArgs,
+  ): Promise<Array<RowObject>> {
+    const lock = await this.lock_(opts?.ctx, opts?.lock, undefined, true);
+    return this.er_.queryEntries(
+      lock,
+      sql,
+      {
+        ctx: opts?.ctx,
+        args: opts?.args,
+      },
+    );
+  }
+  async query(
+    table: string,
+    opts?: QueryArgs,
+  ): Promise<Array<Row>> {
+    const builder = new Builder();
+    builder.query(table, opts);
+
+    const lock = await this.lock_(opts?.ctx, opts?.lock, undefined, true);
+    return this.er_.query(
+      lock,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  async queryEntries(
+    table: string,
+    opts?: QueryArgs,
+  ): Promise<Array<RowObject>> {
+    const builder = new Builder();
+    builder.query(table, opts);
+
+    const lock = await this.lock_(opts?.ctx, opts?.lock, undefined, true);
+    return this.er_.queryEntries(
+      lock,
+      builder.sql(),
+      {
+        ctx: opts?.ctx,
+        args: builder.args(),
+      },
+    );
+  }
+  batch() {
+    return new Batch(this.er_, this.lock_);
+  }
+  async createSavepoint(name: string, opts?: ContextArgs) {
+    const s = new SqlSavepointState(
+      this.er_,
+      name,
+      this.root ? undefined : this.lock_,
+    );
+    await s.init(opts);
+    return new SqlSavepoint(s);
+  }
+  /**
+   * Like Transactions but allows nesting
+   * @see {@link https://www.sqlite.org/lang_savepoint.html}
+   */
+  async savepoint<T>(
+    name: string,
+    action: (sp: SqlSavepoint) => Promise<T>,
+    opts?: ContextArgs,
+  ): Promise<T> {
+    const s = new SqlSavepointState(
+      this.er_,
+      name,
+      this.root ? undefined : this.lock_,
+    );
+    await s.init(opts);
+    const sp = new SqlSavepoint(s);
+    let resp: T;
+    try {
+      resp = await action(sp);
+    } catch (e) {
+      await s.rollback();
+      throw e;
+    }
+    await s.commit();
+    return resp;
+  }
 }
-export class DB extends SqlPrepare implements Executor {
+
+export class DB extends SqlExecutor {
   static async open(
     path = ":memory:",
     opts?: OpenOptions,
@@ -388,7 +603,7 @@ export class DB extends SqlPrepare implements Executor {
     return this.er_.db;
   }
   constructor(er: _Executor) {
-    super(er);
+    super(er, lockDB, true);
   }
   get showSQL(): boolean {
     return this.er_.showSQL;
@@ -408,163 +623,35 @@ export class DB extends SqlPrepare implements Executor {
   close() {
     return this.er_.db.close();
   }
-  execute(sql: string, opts?: ExecuteArgs): Promise<void> {
-    return this.er_.execute(opts?.lock ?? Locker.shared, sql, {
-      ctx: opts?.ctx,
-      args: opts?.args,
-    });
-  }
-  rawInsert(
-    sql: string,
-    opts?: ExecuteArgs,
-  ): Promise<number | bigint> {
-    return this.er_.insert(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  insert(
-    table: string,
-    values: Record<string, any>,
-    opts?: InsertArgs,
-  ): Promise<number | bigint> {
-    const builder = new Builder();
-    builder.insert(table, values, opts?.conflict);
-    return this.er_.insert(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
-  rawDelete(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  delete(table: string, opts?: DeleteArgs): Promise<number | bigint> {
-    const builder = new Builder();
-    builder.delete(table, opts);
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
-  rawUpdate(sql: string, opts?: ExecuteArgs): Promise<number | bigint> {
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  update(
-    table: string,
-    values: Record<string, any>,
-    opts?: UpdateArgs,
-  ): Promise<number | bigint> {
-    const builder = new Builder();
-    builder.update(table, values, opts);
-    return this.er_.changes(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
-  rawQuery(
-    sql: string,
-    opts?: ExecuteArgs,
-  ): Promise<Array<Row>> {
-    return this.er_.query(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  rawQueryEntries(
-    sql: string,
-    opts?: ExecuteArgs,
-  ): Promise<Array<RowObject>> {
-    return this.er_.queryEntries(
-      opts?.lock ?? Locker.shared,
-      sql,
-      {
-        ctx: opts?.ctx,
-        args: opts?.args,
-      },
-    );
-  }
-  query(
-    table: string,
-    opts?: QueryArgs,
-  ): Promise<Array<Row>> {
-    const builder = new Builder();
-    builder.query(table, opts);
-    return this.er_.query(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
-  queryEntries(
-    table: string,
-    opts?: QueryArgs,
-  ): Promise<Array<RowObject>> {
-    const builder = new Builder();
-    builder.query(table, opts);
-    return this.er_.queryEntries(
-      opts?.lock ?? Locker.shared,
-      builder.sql(),
-      {
-        ctx: opts?.ctx,
-        args: builder.args(),
-      },
-    );
-  }
 
-  batch() {
-    return new Batch(this.er_);
+  /**
+   * start a transaction
+   */
+  async begin(opts?: TransactionArgs): Promise<SqlTransaction> {
+    const s = new SqlTransactionState(this.er_);
+    await s.init(opts);
+    return new SqlTransaction(s);
   }
+  /**
+   * Start a transaction to execute the action function,
+   * automatically commit after the function ends,
+   * and automatically roll back if the function throws an exception
+   */
   async transaction<T>(
-    action: (txn: Transaction) => Promise<T>,
+    action: (txn: SqlTransaction) => Promise<T>,
     opts?: TransactionArgs,
   ): Promise<T> {
-    const txn = new _Transaction(this.er_);
-    await txn._init(opts);
+    const s = new SqlTransactionState(this.er_);
+    await s.init(opts);
+    const txn = new SqlTransaction(s);
     let resp: T;
     try {
       resp = await action(txn);
     } catch (e) {
-      await txn._rollback();
+      await s.rollback();
       throw e;
     }
-    await txn._commit();
+    await s.commit();
     return resp;
   }
 }
@@ -711,8 +798,9 @@ export class Batch implements BatchExecutor {
     args?: QueryParameterSet;
     method?: Method;
   }>();
-  constructor(private er_: _Executor) {}
-  private lock_ = Locker.none;
+  constructor(private er_: _Executor, readonly lock_: LockerFunc) {}
+  private read_?: boolean;
+  private write_?: boolean;
   values() {
     return this.values_;
   }
@@ -721,8 +809,14 @@ export class Batch implements BatchExecutor {
     if (batch.length == 0) {
       return [];
     }
+    const lock = await this.lock_(
+      opts?.ctx,
+      opts?.lock,
+      this.write_,
+      this.read_,
+    );
     const rows = await this.er_.batch(
-      opts?.lock ?? this.lock_,
+      lock,
       {
         ctx: opts?.ctx,
         savepoint: opts?.savepoint,
@@ -802,8 +896,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: opts?.args,
     });
-    this.lock_ = Locker.shared;
-
+    this.write_ = true;
     return this;
   }
   rawInsert(sql: string, opts?: BatchArgs) {
@@ -826,8 +919,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: opts?.args,
     });
-    this.lock_ = Locker.shared;
-
+    this.write_ = true;
     return this;
   }
   insert(
@@ -865,7 +957,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: opts?.args,
     });
-    this.lock_ = Locker.shared;
+    this.write_ = true;
   }
   rawDelete(sql: string, opts?: BatchArgs) {
     this._change(sql, opts);
@@ -920,8 +1012,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: args,
     });
-    this.lock_ = Locker.shared;
-
+    this.read_ = true;
     return this;
   }
   rawQuery(sql: string, opts?: BatchArgs) {
@@ -939,8 +1030,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: opts?.args,
     });
-    this.lock_ = Locker.shared;
-
+    this.read_ = true;
     return this;
   }
   queryEntries(table: string, opts?: BatchQueryArgs) {
@@ -964,8 +1054,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: args,
     });
-    this.lock_ = Locker.shared;
-
+    this.read_ = true;
     return this;
   }
   rawQueryEntries(sql: string, opts?: BatchArgs) {
@@ -984,8 +1073,7 @@ export class Batch implements BatchExecutor {
       sql: sql,
       args: opts?.args,
     });
-    this.lock_ = Locker.shared;
-
+    this.read_ = true;
     return this;
   }
   prepare(sql: string, opts?: BatchNameArgs) {
@@ -1065,36 +1153,35 @@ export class Batch implements BatchExecutor {
       case Method.firstEntry:
       case Method.all:
       case Method.allEntries:
+        this.sqls_.push({
+          sql: preparor.sql,
+          args: opts?.args,
+          method: method,
+        });
+        this.read_ = true;
+        break;
       case Method.execute:
         this.sqls_.push({
           sql: preparor.sql,
           args: opts?.args,
           method: method,
         });
+        this.write_ = true;
         break;
     }
-
-    if (method != Method.expandSql && method != Method.columns) {
-      this.lock_ = Locker.shared;
-    }
-
     return this;
   }
 }
-export class _Transaction extends SqlPrepare {
-  constructor(er_: _Executor) {
-    super(er_);
-  }
+class SqlTransactionState {
+  constructor(readonly er_: _Executor) {}
   private lock_ = Locker.none;
   private locked_?: Locked;
   private begin_ = false;
-  async _read(ctx?: Context) {
-    if (this.lock_ == Locker.none) {
-      this.locked_ = await this.er_.rw.readLock(ctx);
-      this.lock_ = Locker.shared;
+  closed_ = false;
+  async write(ctx?: Context): Promise<Locker.none> {
+    if (this.closed_) {
+      throw new SqliteError(`Transaction already closed`);
     }
-  }
-  async _write(ctx?: Context) {
     if (this.lock_ == Locker.none) {
       this.locked_ = await this.er_.rw.lock(ctx);
       this.lock_ = Locker.exclusive;
@@ -1108,19 +1195,34 @@ export class _Transaction extends SqlPrepare {
       this.lock_ = Locker.exclusive;
     }
 
-    if (this.begin_) {
-      return;
+    if (!this.begin_) {
+      await this.er_.invoke(Locker.none, {
+        ctx: ctx,
+        req: {
+          what: What.execute,
+          sql: "BEGIN DEFERRED",
+        },
+      });
+      this.begin_ = true;
     }
-    await this.er_.invoke(Locker.none, {
-      ctx: ctx,
-      req: {
-        what: What.execute,
-        sql: "BEGIN DEFERRED",
-      },
-    });
-    this.begin_ = true;
+    return Locker.none;
   }
-  async _rollback() {
+  async read(ctx?: Context): Promise<Locker.none> {
+    if (this.closed_) {
+      throw new SqliteError(`Transaction already closed`);
+    }
+
+    if (this.lock_ == Locker.none) {
+      this.locked_ = await this.er_.rw.readLock(ctx);
+      this.lock_ = Locker.shared;
+    }
+    return Locker.none;
+  }
+  async rollback() {
+    if (this.closed_) {
+      throw new SqliteError(`Transaction already closed`);
+    }
+    this.closed_ = true;
     const er = this.er_;
     if (this.begin_) {
       try {
@@ -1136,7 +1238,11 @@ export class _Transaction extends SqlPrepare {
     }
     this.locked_?.unlock();
   }
-  async _commit() {
+  async commit() {
+    if (this.closed_) {
+      throw new SqliteError(`Transaction already closed`);
+    }
+    this.closed_ = true;
     const er = this.er_;
     if (this.begin_) {
       try {
@@ -1151,7 +1257,7 @@ export class _Transaction extends SqlPrepare {
     }
     this.locked_?.unlock();
   }
-  async _init(opts?: TransactionArgs) {
+  async init(opts?: TransactionArgs) {
     let lock = opts?.lock ?? Locker.none;
     switch (opts?.type) {
       case "IMMEDIATE":
@@ -1197,6 +1303,144 @@ export class _Transaction extends SqlPrepare {
     this.locked_ = locked;
   }
 }
-export function isTransaction(t: any): t is Transaction {
-  return t instanceof _Transaction;
+export class SqlTransaction extends SqlExecutor implements Transaction {
+  constructor(private readonly s_: SqlTransactionState) {
+    super(s_.er_, (ctx, locker, write, read) => {
+      if (write) {
+        return s_.write(ctx);
+      } else if (read) {
+        if (locker == Locker.exclusive) {
+          return s_.write(ctx);
+        }
+        return s_.read(ctx);
+      }
+      return Locker.none;
+    });
+  }
+  get isClosed(): boolean {
+    return this.s_.closed_;
+  }
+  rollback() {
+    return this.s_.rollback();
+  }
+  commit() {
+    return this.s_.commit();
+  }
+}
+class SqlSavepointState {
+  private lock_ = Locker.none;
+  private locked_?: Locked;
+  private begin_ = false;
+  closed_ = false;
+  constructor(
+    readonly er: _Executor,
+    readonly name: string,
+    readonly lockf?: LockerFunc,
+  ) {}
+  lock(ctx?: Context, locker?: Locker, write?: boolean, read?: boolean) {
+    if (this.closed_) {
+      throw new SqliteError(`Savepoint already closed: ${this.name}`);
+    }
+    return this._lock(ctx, locker, write, read);
+  }
+  private _lock(
+    ctx?: Context,
+    locker?: Locker,
+    write?: boolean,
+    read?: boolean,
+  ) {
+    if (this.lockf) {
+      return this.lockf(ctx, locker, write, read);
+    } else if (write || read) {
+      return this._write(ctx);
+    }
+    return Locker.none;
+  }
+  private async _write(ctx?: Context): Promise<Locker.none> {
+    if (this.lock_ == Locker.none) {
+      this.locked_ = await this.er.rw.lock(ctx);
+      this.lock_ = Locker.exclusive;
+    } else if (this.lock_ == Locker.shared) {
+      const locked = this.locked_!;
+      this.locked_ = undefined;
+      this.lock_ = Locker.none;
+      locked.unlock();
+
+      this.locked_ = await this.er.rw.lock(ctx);
+      this.lock_ = Locker.exclusive;
+    }
+
+    if (!this.begin_) {
+      await this.er.invoke(Locker.none, {
+        ctx: ctx,
+        req: {
+          what: What.execute,
+          sql: `SAVEPOINT ${this.name}`,
+        },
+      });
+      this.begin_ = true;
+    }
+    return Locker.none;
+  }
+  async rollback() {
+    if (this.closed_) {
+      throw new SqliteError(`Savepoint already closed: ${this.name}`);
+    }
+    this.closed_ = true;
+    const er = this.er;
+    if (this.begin_) {
+      const lock = await this._lock(undefined, undefined, true);
+      await er.execute(lock, `ROLLBACK TO ${this.name}`);
+      return;
+    }
+
+    if (er.showSQL) {
+      log.log(`ROLLBACK TO ${this.name} -- 0ms`);
+    }
+    this.locked_?.unlock();
+  }
+  async commit() {
+    if (this.closed_) {
+      throw new SqliteError(`Savepoint already closed: ${this.name}`);
+    }
+    this.closed_ = true;
+    const er = this.er;
+    if (this.begin_) {
+      const lock = await this._lock(undefined, undefined, true);
+      await er.execute(lock, `RELEASE ${this.name}`);
+      return;
+    }
+
+    if (er.showSQL) {
+      log.log(`RELEASE ${this.name} -- 0ms`);
+    }
+    this.locked_?.unlock();
+  }
+  async init(opts?: ContextArgs) {
+    const er = this.er;
+    if (this.lockf) {
+      // lock root
+      await this.lockf(opts?.ctx, undefined, true);
+      await er.execute(Locker.none, `SAVEPOINT ${this.name}`);
+      this.begin_ = true;
+      return;
+    }
+    // this is root
+  }
+}
+export class SqlSavepoint extends SqlExecutor implements Transaction {
+  constructor(private readonly s_: SqlSavepointState) {
+    super(s_.er, (ctx, locker, write, read) => {
+      return s_.lock(ctx, locker, write, read);
+    });
+  }
+  get isClosed(): boolean {
+    return this.s_.closed_;
+  }
+  rollback() {
+    return this.s_.rollback();
+  }
+  commit() {
+    return this.s_.commit();
+  }
 }

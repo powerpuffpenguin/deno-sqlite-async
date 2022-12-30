@@ -342,6 +342,21 @@ export interface Executor extends CreatorPrepared {
    * when the transaction is done
    */
   batch(): BatchExecutor;
+
+  /**
+   * Like Transactions but allows nesting
+   * @see {@link https://www.sqlite.org/lang_savepoint.html}
+   */
+  savepoint<T>(
+    name: string,
+    action: (txn: Transaction) => Promise<T>,
+    opts?: ContextArgs,
+  ): Promise<T>;
+  /**
+   * Like Transactions but allows nesting
+   * @see {@link https://www.sqlite.org/lang_savepoint.html}
+   */
+  createSavepoint(name: string, opts?: ContextArgs): Promise<Transaction>;
 }
 
 export interface Preparor {
@@ -618,5 +633,17 @@ export interface BatchExecutor {
 export interface TransactionArgs extends LockArgs {
   type?: "DEFERRED" | "IMMEDIATE" | "EXCLUSIVE";
 }
-export interface Transaction {
+export interface Transaction extends Executor {
+  /**
+   * Is the transaction closed
+   */
+  readonly isClosed: boolean;
+  /**
+   * rollback transaction
+   */
+  rollback(): Promise<void>;
+  /**
+   * commit transaction
+   */
+  commit(): Promise<void>;
 }
