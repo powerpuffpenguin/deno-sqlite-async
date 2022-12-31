@@ -72,19 +72,13 @@ export interface OpenOptions extends RawOpenOptions {
   showSQL?: boolean;
 
   /**
-   * Disable onOpen/onCreate/onUpgrade/onDowngrade/onDowngrade callbacks
-   *
-   * If the callback is disabled, the web_worker_sqlite_system table is also not automatically created to record the database version
-   */
-  noCallback?: boolean;
-  /**
    * The function that is first called back after the connection is created
    *
    * Called before onCreate/onUpgrade/onDowngrade
    *
    * @param txn Transaction
    */
-  onOpen?: (txn: SqlTransaction) => void | Promise<void>;
+  onOpen?: (txn: SqlTransaction) => any;
 
   /**
    * Callback when the database is first created
@@ -102,7 +96,7 @@ export interface OpenOptions extends RawOpenOptions {
     txn: SqlTransaction,
     oldVersion: number,
     newVersion: number,
-  ) => void | Promise<void>;
+  ) => any;
   /**
    * Callback when the current version is lower than the version recorded in the database
    * @param txn Transaction
@@ -113,7 +107,7 @@ export interface OpenOptions extends RawOpenOptions {
     txn: SqlTransaction,
     oldVersion: number,
     newVersion: number,
-  ) => void | Promise<void>;
+  ) => any;
 
   /**
    * Callback when everything is ready
@@ -122,7 +116,7 @@ export interface OpenOptions extends RawOpenOptions {
    * @param txn Transaction
    * @param version database current version
    */
-  onReady?: (txn: SqlTransaction, version: number) => void | Promise<void>;
+  onReady?: (txn: SqlTransaction, version: number) => any;
 }
 
 export class _Executor {
@@ -610,10 +604,13 @@ export class DB extends SqlExecutor {
     path?: string,
     opts?: OpenOptions,
   ): Promise<DB> {
-    const version = opts?.version ?? 0;
-    if (!Number.isSafeInteger(version) || version < 0) {
-      throw new SqliteError(`db version '${version}' not supported`);
+    const version = opts?.version;
+    if (typeof version === "number") {
+      if (!Number.isSafeInteger(version) || version < 0) {
+        throw new SqliteError(`db version '${version}' not supported`);
+      }
     }
+
     const rawdb = await RawDB.open(path, {
       mode: opts?.mode,
       memory: opts?.memory,
@@ -629,7 +626,7 @@ export class DB extends SqlExecutor {
       throw e;
     }
     const db = new DB(er);
-    if (opts?.noCallback) {
+    if (typeof version !== "number") {
       return db;
     }
     try {
@@ -866,7 +863,7 @@ export class Prepared implements Preparor {
     if (prepare.isClosed) {
       throw new SqliteError(`Prepared(${prepare.id}) already closed`);
     }
-    return this.er_.method(opts?.lock ?? Locker.none, {
+    return this.er_.method(opts?.lock ?? Locker.shared, {
       ctx: opts?.ctx,
       sql: prepare.id,
       args: opts?.args,
@@ -908,6 +905,9 @@ export class Batch implements BatchExecutor {
   private write_?: boolean;
   values() {
     return this.values_;
+  }
+  get<T>(name: string): T | undefined {
+    return (this.values_?.get(name) ?? undefined) as any;
   }
   async commit(opts?: BatchCommit): Promise<Array<BatchResult>> {
     const batch = this.batch_;
