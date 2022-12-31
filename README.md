@@ -380,43 +380,47 @@ export interface LockArgs extends ContextArgs {
 }
 ```
 
+The system will perform the default locking behavior according to the semantics
+of the API, so even some APIs can perform multiple functions, but please use
+them according to their semantics, for example, do not use rawQuery to update
+data
+
+The following table documents the default locking behavior
+
+| API             | no-transactions | in-transactions |
+| --------------- | --------------- | --------------- |
+| execute         | shared          | exclusive       |
+| rawInsert       | shared          | exclusive       |
+| insert          | shared          | exclusive       |
+| rawDelete       | shared          | exclusive       |
+| delete          | shared          | exclusive       |
+| rawUpdate       | shared          | exclusive       |
+| update          | shared          | exclusive       |
+| query           | none            | shared          |
+| queryEntries    | none            | shared          |
+| rawQuery        | none            | shared          |
+| rawQueryEntries | none            | shared          |
+
+| Prepare API | no-transactions | in-transactions |
+| ----------- | --------------- | --------------- |
+| columns     | none            | none            |
+| first       | none            | shared          |
+| firstEntry  | none            | shared          |
+| all         | none            | shared          |
+| allEntries  | none            | shared          |
+| execute     | shared          | exclusive       |
+| expandSql   | none            | none            |
+
+> In a transaction, Prepare cannot be accessed directly. It needs to be accessed
+> through the proxy method provided by transactions to properly handle locks.
+
 ## prepare-in-transactions
 
-Using prepare in a transaction is very error-prone, because prepare cannot
-notify the transaction of correct handling lock behavior
+The prepare method cannot be used directly in the transaction, because these
+methods cannot cooperate with the lock inside the transaction
 
-To use prepare correctly in a transaction, you need to make sure that the
-transaction has been locked before executing the operation that prepare needs to
-lock and tell prepare not to lock again
-
-A simple way is to use IMMEDIATE/EXCLUSIVE to start the transaction, so that the
-transaction will immediately add the Locker.exclusive lock, and then all
-prepares are explicitly set not to lock
-
-```
-const insert = await db.prepareInsert(table, [columnID, columnName]);
-const insertID = db.prepareLastInsertRowid();
-const query = await db.prepareQuery(table, {
-  columns: [columnID, columnName],
-});
-await db.transaction(async (tnx) => {
-  for (let i = 1; i < 100; i++) {
-    await insert.execute({
-      lock: Locker.none,
-      args: [i, `name-${i}`],
-    });
-    const id = (await insertID.first())![0];
-    console.log(`insertID: ${id}`);
-  }
-  const rows = await query.allEntries();
-  console.log(rows);
-}, {
-  type: "EXCLUSIVE", // will be locked immediately
-});
-```
-
-You can also use the method function provided by the transaction to delegate
-access to the function of prepare, This is the easiest and correct way.
+You can use the method function provided by the transaction to delegate access
+to the function of prepare, This is the easiest and correct way.
 
 ```
   const insert = await db.prepareInsert(table, [columnID, columnName]);
