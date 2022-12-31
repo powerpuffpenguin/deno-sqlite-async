@@ -1312,8 +1312,13 @@ export class SqlTransaction extends SqlExecutor implements Transaction {
       if (s_.closed_) {
         throw new SqliteError(`Transaction already closed`);
       }
-      if (locker) {
-        return Promise.resolve(locker);
+      switch (locker) {
+        case Locker.exclusive:
+          return s_.write(ctx);
+        case Locker.shared:
+          return s_.read(ctx);
+        case Locker.none:
+          return Promise.resolve(locker);
       }
       if (write) {
         return s_.write(ctx);
@@ -1357,7 +1362,16 @@ class SqlSavepointState {
   ) {
     if (this.lockf) {
       return this.lockf(ctx, locker, write, read);
-    } else if (write || read) {
+    }
+    switch (locker) {
+      case Locker.none:
+        return locker;
+      case Locker.exclusive:
+        return this._write(ctx);
+      case Locker.shared:
+        return this._read(ctx);
+    }
+    if (write || read) {
       return this._write(ctx);
     }
     return Locker.none;
@@ -1388,7 +1402,13 @@ class SqlSavepointState {
     }
     return Locker.none;
   }
-
+  private async _read(ctx?: Context): Promise<Locker.none> {
+    if (this.lock_ == Locker.none) {
+      this.locked_ = await this.er.rw.readLock(ctx);
+      this.lock_ = Locker.shared;
+    }
+    return Locker.none;
+  }
   async rollback() {
     if (this.closed_) {
       throw new SqliteError(`Savepoint already closed: ${this.name}`);
