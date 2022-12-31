@@ -38,6 +38,7 @@ import {
   BatchResult,
   BatchUpdateArgs,
   BatchValue,
+  Conflict,
   ContextArgs,
   CreatorDeleteArgs,
   CreatorInsertArgs,
@@ -583,14 +584,20 @@ class SqlExecutor implements CreatorPrepared, Executor {
 
 export class DB extends SqlExecutor {
   static async open(
-    path = ":memory:",
+    path?: string,
     opts?: OpenOptions,
   ): Promise<DB> {
     const version = opts?.version ?? 0;
     if (!Number.isSafeInteger(version) || version < 0) {
       throw new SqliteError(`db version '${version}' not supported`);
     }
-    const rawdb = await RawDB.open(path, opts);
+    const rawdb = await RawDB.open(path, {
+      mode: opts?.mode,
+      memory: opts?.memory,
+      uri: opts?.uri,
+      worker: opts?.worker,
+      task: opts?.task,
+    });
     const er = new _Executor(rawdb, opts?.showSQL ?? false);
     try {
       await er.init();
@@ -599,7 +606,71 @@ export class DB extends SqlExecutor {
       throw e;
     }
     const db = new DB(er);
+    try {
+      await db.transaction(async (txn) => {
+        const batch = txn.batch();
+        batch.execute(
+          "CREATE TABLE IF NOT EXISTS web_worker_sqlite_system (id INTEGER PRIMARY KEY, version INTEGER)",
+        ).queryEntries("web_worker_sqlite_system", {
+          columns: ["version"],
+          where: `id = 1`,
+        });
+        const rows = await batch.commit();
+        const row = rows[0].sql! as RowObject[];
+        if (row.length == 0) {
+          await txn.insert("web_worker_sqlite_system", {
+            id: 1,
+            version: version,
+          });
+          if (opts?.onCreate) {
+            await opts.onCreate(txn, version);
+          }
+        } else {
+          const val = row[0].version;
+          if (val === version) {
+            return;
+          }
 
+          if (typeof val === "number") {
+            if (version > val) {
+              await txn.update("web_worker_sqlite_system", {
+                version: version,
+              }, {
+                where: "id = 1",
+              });
+              if (opts?.onUpgrade) {
+                await opts.onUpgrade(txn, val, version);
+              }
+            } else if (version < val) {
+              if (opts?.onDowngrade) {
+                await txn.update("web_worker_sqlite_system", {
+                  version: version,
+                }, {
+                  where: "id = 1",
+                });
+                await opts.onDowngrade(txn, val, version);
+              } else {
+                throw new SqliteError(
+                  `version(${val}) is higher than the incoming version(${version}), please set the onDowngrade callback function`,
+                );
+              }
+            }
+          } else {
+            await txn.update("web_worker_sqlite_system", {
+              version: version,
+            }, {
+              where: "id = 1",
+            });
+            if (opts?.onCreate) {
+              await opts.onCreate(txn, version);
+            }
+          }
+        }
+      });
+    } catch (e) {
+      db.close();
+      throw e;
+    }
     return db;
   }
   get db() {
@@ -1416,8 +1487,8 @@ class SqlSavepointState {
     this.closed_ = true;
     const er = this.er;
     if (this.begin_) {
-      const lock = await this._lock(undefined, undefined, true);
-      await er.execute(lock, `ROLLBACK TO ${this.name}`);
+      await this._lock(); // check chain closed
+      await er.execute(Locker.none, `ROLLBACK TO ${this.name}`);
       return;
     }
 
@@ -1433,8 +1504,8 @@ class SqlSavepointState {
     this.closed_ = true;
     const er = this.er;
     if (this.begin_) {
-      const lock = await this._lock(undefined, undefined, true);
-      await er.execute(lock, `RELEASE ${this.name}`);
+      await this._lock(); // check chain closed
+      await er.execute(Locker.none, `RELEASE ${this.name}`);
       return;
     }
 

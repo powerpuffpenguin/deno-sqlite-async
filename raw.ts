@@ -81,7 +81,11 @@ export class RawDB {
     try {
       await this.caller_.open({
         path: path,
-        opts: opts,
+        opts: {
+          mode: opts?.mode,
+          memory: opts?.memory,
+          uri: opts?.uri,
+        },
       });
     } catch (e) {
       this.close();
