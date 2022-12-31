@@ -323,10 +323,13 @@ function lockDB(
   locker?: Locker,
   write?: boolean,
 ) {
-  if (write) {
-    return locker === Locker.exclusive ? Locker.exclusive : Locker.shared;
+  if (locker) {
+    return locker;
   }
-  return locker ?? Locker.none;
+  if (write) {
+    return Locker.shared;
+  }
+  return Locker.none;
 }
 type LockerFunc = (
   ctx?: Context,
@@ -1306,12 +1309,15 @@ class SqlTransactionState {
 export class SqlTransaction extends SqlExecutor implements Transaction {
   constructor(private readonly s_: SqlTransactionState) {
     super(s_.er_, (ctx, locker, write, read) => {
+      if (s_.closed_) {
+        throw new SqliteError(`Transaction already closed`);
+      }
+      if (locker) {
+        return Promise.resolve(locker);
+      }
       if (write) {
         return s_.write(ctx);
       } else if (read) {
-        if (locker == Locker.exclusive) {
-          return s_.write(ctx);
-        }
         return s_.read(ctx);
       }
       return Locker.none;
@@ -1382,6 +1388,7 @@ class SqlSavepointState {
     }
     return Locker.none;
   }
+
   async rollback() {
     if (this.closed_) {
       throw new SqliteError(`Savepoint already closed: ${this.name}`);
