@@ -92,11 +92,11 @@ export interface SelectArgs {
   /**
    * sql LIMIT section
    */
-  limit?: number;
+  limit?: number | bigint | string;
   /**
    * sql OFFSET section
    */
-  offset?: number | bigint;
+  offset?: number | bigint | string;
 }
 export interface Args {
   /**
@@ -357,6 +357,17 @@ export interface Executor extends CreatorPrepared {
    * @see {@link https://www.sqlite.org/lang_savepoint.html}
    */
   createSavepoint(name: string, opts?: ContextArgs): Promise<Transaction>;
+
+  /**
+   * method that calls prepare
+   *
+   * In the transaction, you need to use this method to call prepare
+   */
+  method(
+    preparor: Preparor,
+    method: Method,
+    opts?: ExecuteArgs,
+  ): Promise<any>;
 }
 
 export interface Preparor {

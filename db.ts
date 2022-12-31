@@ -571,10 +571,7 @@ class SqlExecutor implements CreatorPrepared, Executor {
     await s.init(opts);
     return new SqlSavepoint(s);
   }
-  /**
-   * Like Transactions but allows nesting
-   * @see {@link https://www.sqlite.org/lang_savepoint.html}
-   */
+
   async savepoint<T>(
     name: string,
     action: (sp: SqlSavepoint) => Promise<T>,
@@ -596,6 +593,42 @@ class SqlExecutor implements CreatorPrepared, Executor {
     }
     await s.commit();
     return resp;
+  }
+
+  async method(
+    preparor: Preparor,
+    method: Method,
+    opts?: ExecuteArgs,
+  ) {
+    if (preparor.isClosed) {
+      throw new SqliteError(`Preparor(${preparor.id}) already closed`);
+    }
+    let write: undefined | boolean;
+    let read: undefined | boolean;
+    let sql: string | undefined;
+    switch (method) {
+      case Method.first:
+      case Method.firstEntry:
+      case Method.all:
+      case Method.allEntries:
+        read = true;
+        sql = preparor.sql;
+        break;
+      case Method.execute:
+        write = true;
+        sql = preparor.sql;
+        break;
+    }
+    const lock = await this.lock_(opts?.ctx, opts?.lock, write, read);
+    if (preparor.isClosed) {
+      throw new SqliteError(`Preparor(${preparor.id}) already closed`);
+    }
+    return this.er_.method(lock, {
+      sql: preparor.id,
+      args: opts?.args,
+      method: method,
+      result: method == Method.execute ? undefined : true,
+    }, sql);
   }
 }
 

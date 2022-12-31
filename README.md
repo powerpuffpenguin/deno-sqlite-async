@@ -415,6 +415,29 @@ await db.transaction(async (tnx) => {
 });
 ```
 
+You can also use the method function provided by the transaction to delegate
+access to the function of prepare, This is the easiest and correct way.
+
+```
+  const insert = await db.prepareInsert(table, [columnID, columnName]);
+  const insertID = db.prepareLastInsertRowid();
+  const query = await db.prepareQuery(table, {
+    columns: [columnID, columnName],
+  });
+  await db.transaction(async (tnx) => {
+    for (let i = 1; i < 100; i++) {
+      await tnx.method(insert, Method.execute, {
+        args: [i, `name-${i}`],
+      });
+      const id = await tnx.method(insertID, Method.first);
+      console.log(`insertID: ${id}`);
+    }
+    const rows = await tnx.method(query, Method.allEntries);
+
+    console.log(rows);
+  });
+```
+
 Another approach is to put prepare in the batch created by the transaction,
 because the batch of the transaction can communicate correctly with the lock of
 the transaction
