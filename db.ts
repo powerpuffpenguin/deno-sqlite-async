@@ -38,7 +38,6 @@ import {
   BatchResult,
   BatchUpdateArgs,
   BatchValue,
-  Conflict,
   ContextArgs,
   CreatorDeleteArgs,
   CreatorInsertArgs,
@@ -73,6 +72,21 @@ export interface OpenOptions extends RawOpenOptions {
   showSQL?: boolean;
 
   /**
+   * Disable onOpen/onCreate/onUpgrade/onDowngrade/onDowngrade callbacks
+   *
+   * If the callback is disabled, the web_worker_sqlite_system table is also not automatically created to record the database version
+   */
+  noCallback?: boolean;
+  /**
+   * The function that is first called back after the connection is created
+   *
+   * Called before onCreate/onUpgrade/onDowngrade
+   *
+   * @param txn Transaction
+   */
+  onOpen?: (txn: SqlTransaction) => void | Promise<void>;
+
+  /**
    * Callback when the database is first created
    * @param txn Transaction
    * @param version database current version
@@ -100,6 +114,15 @@ export interface OpenOptions extends RawOpenOptions {
     oldVersion: number,
     newVersion: number,
   ) => void | Promise<void>;
+
+  /**
+   * Callback when everything is ready
+   *
+   * Called after onCreate/onUpgrade/onDowngrade
+   * @param txn Transaction
+   * @param version database current version
+   */
+  onReady?: (txn: SqlTransaction, version: number) => void | Promise<void>;
 }
 
 export class _Executor {
@@ -606,8 +629,15 @@ export class DB extends SqlExecutor {
       throw e;
     }
     const db = new DB(er);
+    if (opts?.noCallback) {
+      return db;
+    }
     try {
       await db.transaction(async (txn) => {
+        if (opts?.onOpen) {
+          await opts.onOpen(txn);
+        }
+
         const batch = txn.batch();
         batch.execute(
           "CREATE TABLE IF NOT EXISTS web_worker_sqlite_system (id INTEGER PRIMARY KEY, version INTEGER)",
@@ -627,44 +657,45 @@ export class DB extends SqlExecutor {
           }
         } else {
           const val = row[0].version;
-          if (val === version) {
-            return;
-          }
-
-          if (typeof val === "number") {
-            if (version > val) {
-              await txn.update("web_worker_sqlite_system", {
-                version: version,
-              }, {
-                where: "id = 1",
-              });
-              if (opts?.onUpgrade) {
-                await opts.onUpgrade(txn, val, version);
-              }
-            } else if (version < val) {
-              if (opts?.onDowngrade) {
+          if (val !== version) {
+            if (typeof val === "number") {
+              if (version > val) {
                 await txn.update("web_worker_sqlite_system", {
                   version: version,
                 }, {
                   where: "id = 1",
                 });
-                await opts.onDowngrade(txn, val, version);
-              } else {
-                throw new SqliteError(
-                  `version(${val}) is higher than the incoming version(${version}), please set the onDowngrade callback function`,
-                );
+                if (opts?.onUpgrade) {
+                  await opts.onUpgrade(txn, val, version);
+                }
+              } else if (version < val) {
+                if (opts?.onDowngrade) {
+                  await txn.update("web_worker_sqlite_system", {
+                    version: version,
+                  }, {
+                    where: "id = 1",
+                  });
+                  await opts.onDowngrade(txn, val, version);
+                } else {
+                  throw new SqliteError(
+                    `version(${val}) is higher than the incoming version(${version}), please set the onDowngrade callback function`,
+                  );
+                }
+              }
+            } else {
+              await txn.update("web_worker_sqlite_system", {
+                version: version,
+              }, {
+                where: "id = 1",
+              });
+              if (opts?.onCreate) {
+                await opts.onCreate(txn, version);
               }
             }
-          } else {
-            await txn.update("web_worker_sqlite_system", {
-              version: version,
-            }, {
-              where: "id = 1",
-            });
-            if (opts?.onCreate) {
-              await opts.onCreate(txn, version);
-            }
           }
+        }
+        if (opts?.onReady) {
+          await opts.onReady(txn, version);
         }
       });
     } catch (e) {
