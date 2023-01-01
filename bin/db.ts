@@ -73,16 +73,6 @@ try {
   // Prepared
   const p = await db.prepare("select * from people where id = ?");
   console.log(await p.columns());
-
-  // const a = await p.columns();
-  // console.log(a);
-
-  // p.close();
-  // for (
-  //   const [id, name] of await db.rawQuery("SELECT id,name FROM people")
-  // ) {
-  //   console.log(id, name);
-  // }
 } finally {
   db.close();
 }

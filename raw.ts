@@ -41,9 +41,9 @@ export class RawDB {
         type: "module",
       },
     );
-    let task = Math.floor(opts?.task ?? 1000);
+    let task = Math.floor(opts?.task ?? 10);
     if (task < 1) {
-      task = 1000;
+      task = 10;
     }
     const caller = new Caller(path, w, task);
     await caller.init();

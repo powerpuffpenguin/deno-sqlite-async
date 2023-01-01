@@ -4,6 +4,7 @@
     },
     "tasks": {
       "deps": "deno run -A deps.ts",
+      "worker":"deno bundle --lock-write worker.ts -- worker.js",
       "run": "deno run --lock-write -A bin/main.ts",
       "test": "deno test -A --fail-fast",
       "test2": "deno test -A --lock-write --fail-fast",

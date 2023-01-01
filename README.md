@@ -5,6 +5,58 @@ deno sqlite3 async
 Run [x/sqlite](https://deno.land/x/sqlite) in a web worker, providing an
 asynchronous api interface for sqlite
 
+```
+import { DB, Conflict } from "https://deno.land/x/sqlite_async/mod.ts"
+
+const table = "people";
+const columnID = "id";
+const columnName = "name";
+const createSQL = `CREATE TABLE IF NOT EXISTS ${table} (
+    ${columnID} INTEGER PRIMARY KEY AUTOINCREMENT,
+    ${columnName} TEXT
+);`;
+
+// open db
+const db = await DB.open("test.db", {
+    version: 1,
+    showSQL: true,
+    onCreate(txn) {
+        return txn.execute(createSQL)
+    }
+});
+
+try {
+    // transaction
+    await db.transaction(async (txn) => {
+        for (let i = 1; i <= 10; i++) {
+            // insert
+            await txn.insert(table,
+                {
+                    id: i,
+                    name: `name-${i}`,
+                },
+                {
+                    conflict: Conflict.replace,
+                },
+            )
+        }
+    })
+
+    // query
+    const rows = await db.queryEntries(table, {
+        distinct: true,
+        where: `${columnID} > ?`,
+        args: [0],
+        orderBy: `${columnID} desc`,
+    })
+    for (const row of rows) {
+        console.log(`id=${row.id} name=${row.name}`)
+    }
+} finally {
+    db.close();
+}
+```
+
 index:
 
 - [db](#db)
@@ -19,6 +71,7 @@ index:
   - [transactions](#transactions)
   - [locker](#locker)
   - [prepare-in-transactions](#prepare-in-transactions)
+  - [context](#context)
 - [rawdb](#rawdb)
 
 # db
@@ -35,6 +88,8 @@ RawDB internally
 To open a SQLite connection just call the static method DB.open
 
 ```
+import { DB, } from "https://deno.land/x/sqlite_async/mod.ts"
+
 const db = await DB.open(
   "test.db",
 );
@@ -475,6 +530,32 @@ the transaction
     const rows = batch.get<RowObject[]>("query");
     console.log(rows);
   });
+```
+
+## context
+
+All asynchronous APIs support an optional parameter Context.
+
+Context is ported from golang. The concept is similar to that in golang. Using
+it, it is easy to set timeout or cancel for the request, and it is also easy to
+cooperate with golang chan. context and chan are provided by
+[easyts](https://deno.land/x/easyts)
+
+```
+import { DB, } from "https://deno.land/x/sqlite_async/mod.ts"
+import { background } from "https://deno.land/x/sqlite_async/deps/easyts/context/mod.ts"
+
+// open db
+const db = await DB.open("test.db");
+
+try {
+    const rows = await db.queryEntries("people", {
+        ctx: background().withTimeout(100),// timeout 100ms
+    })
+    console.log(rows)
+} finally {
+    db.close();
+}
 ```
 
 # rawdb
